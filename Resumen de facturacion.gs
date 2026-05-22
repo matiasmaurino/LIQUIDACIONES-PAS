@@ -1,245 +1,140 @@
-function generarResumenMensualConPorcentajes() {
+function consolidarResumenMensual() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  // 1. Obtener los datos consolidados de origen
-  var hojaOrigen = ss.getSheetByName("LIQUIDACIONES AGRUPADAS");
-  if (!hojaOrigen) return;
-  var datosOrigen = hojaOrigen.getDataRange().getValues();
+  // 1. ORIGEN: Datos detallados de las liquidaciones actuales
+  var hojaDetalle = ss.getSheetByName("LIQUIDACIONES AGRUPADAS");
+  if (!hojaDetalle) {
+    console.warn("No se encontró la solapa 'LIQUIDACIONES AGRUPADAS'.");
+    return;
+  }
+  var datosDetalle = hojaDetalle.getDataRange().getValues();
+  if (datosDetalle.length <= 1) {
+    console.warn("La hoja 'LIQUIDACIONES AGRUPADAS' no contiene filas de datos.");
+    return;
+  }
   
-  // Identificar índices de columnas en el origen basándonos en tu QUERY actual:
-  var idxFecha = 1;       // ColB (Fecha)
-  var idxPas = 10;        // ColK (PAS AGRUPADO)
-  var idxRamo = 11;       // ColL (RAMO_NOMBRE)
-  var idxCia = 9;         // ColJ (CIA)
-  var idxComision = 7;    // ColH (COMISION)
+  // Mapeo dinámico basado en los encabezados reales de la hoja de origen (LIQUIDACIONES AGRUPADAS)
+  var encabezadosDetalle = datosDetalle[0];
+  var idxFecha = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "FECHA"); // Col B
+  var idxPrima = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PRIMA"); // Col F
+  var idxPremio = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PREMIO"); // Col G
+  var idxComision = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "COMISION"); // Col H
+  var idxCia = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "CIA"); // Col J
+  var idxPas = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PAS AGRUPADO"); // Col K
+  var idxRamo = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "RAMO_NOMBRE"); // Col L
   
-  // Objeto para agrupar los valores únicos por clave [Fecha | Cia | Ramo]
-  var mapaAgrupado = {};
+  if (idxFecha === -1 || idxPrima === -1 || idxPremio === -1 || idxComision === -1 || idxCia === -1 || idxPas === -1 || idxRamo === -1) {
+    throw new Error("Faltan columnas críticas en 'LIQUIDACIONES AGRUPADAS'. Verificá que existan: FECHA, PRIMA, PREMIO, COMISION, CIA, PAS AGRUPADO y RAMO_NOMBRE.");
+  }
   
-  // 2. Recorrer datos de origen (saltando el encabezado)
-  for (var i = 1; i < datosOrigen.length; i++) {
-    var fila = datosOrigen[i];
+  // Procesar y agrupar las filas en memoria
+  var mapaNovedades = {};
+  
+  for (var i = 1; i < datosDetalle.length; i++) {
+    var fila = datosDetalle[i];
     
-    var pas = fila[idxPas] ? fila[idxPas].toString().trim().toUpperCase() : "";
+    var rawPas = fila[idxPas] ? fila[idxPas].toString().trim().toUpperCase() : "";
     var rawFecha = fila[idxFecha];
-    var ramo = fila[idxRamo];
-    var cia = fila[idxCia];
+    var ramo = fila[idxRamo] ? fila[idxRamo].toString().trim() : "";
+    var cia = fila[idxCia] ? fila[idxCia].toString().trim() : "";
+    
+    var prima = parseFloat(fila[idxPrima]) || 0;
+    var premio = parseFloat(fila[idxPremio]) || 0;
     var comision = parseFloat(fila[idxComision]) || 0;
     
-    if (!pas || !rawFecha || rawFecha === "FECHA") continue;
+    if (!rawFecha || rawFecha === "FECHA" || rawFecha === "") continue;
     
-    // Normalizar formato fecha a YYYY-MM si viene como tipo Date o texto largo
+    // Traducción normalizada del PAS
+    var pasTraducido = "";
+    if (rawPas.includes("DANIEL GUILLERMO") || rawPas === "DGM") {
+      pasTraducido = "DGM";
+    } else if (rawPas.includes("MATIAS") || rawPas === "MATIAS") {
+      pasTraducido = "MATIAS";
+    } else {
+      pasTraducido = rawPas; 
+    }
+    
+    // Convertir la fecha a formato YYYY-MM
     var fechaStr = "";
     if (rawFecha instanceof Date) {
       fechaStr = Utilities.formatDate(rawFecha, ss.getSpreadsheetTimeZone(), "yyyy-MM");
     } else {
-      fechaStr = rawFecha.toString().substring(0, 7); // Por si es texto completo
+      fechaStr = rawFecha.toString().substring(0, 7);
     }
     
-    // Crear una clave única combinada de fila
-    var clave = fechaStr + "_" + cia + "_" + ramo;
+    if (fechaStr.length !== 7 || !fechaStr.includes("-")) continue;
     
-    if (!mapaAgrupado[clave]) {
-      mapaAgrupado[clave] = {
+    var clave = fechaStr + "_" + pasTraducido + "_" + cia + "_" + ramo;
+    
+    if (!mapaNovedades[clave]) {
+      mapaNovedades[clave] = {
         fecha: fechaStr,
         cia: cia,
+        pas: pasTraducido,
         ramo: ramo,
-        dgm: 0,
-        matias: 0
+        primaTotal: 0,
+        premioTotal: 0,
+        comisionTotal: 0,
+        cantidadPolizas: 0
       };
     }
     
-    // Asignar e ir sumando comisiones según corresponda al PAS AGRUPADO
-    if (pas === "DGM") {
-      mapaAgrupado[clave].dgm += comision;
-    } else if (pas === "MATIAS") {
-      mapaAgrupado[clave].matias += comision;
-    }
+    mapaNovedades[clave].primaTotal += prima;
+    mapaNovedades[clave].premioTotal += premio;
+    mapaNovedades[clave].comisionTotal += comision;
+    mapaNovedades[clave].cantidadPolizas += 1; 
   }
   
-  // 3. Procesar los datos agrupados y calcular totales/porcentajes
-  var filasResultado = [];
-  
-  for (var k in mapaAgrupado) {
-    var item = mapaAgrupado[k];
-    var sumaTotal = item.dgm + item.matias;
+  // Transformar a matriz estructurada de 8 columnas (CON EL ORDEN DE PAS Y CIA CORREGIDO)
+  var filasNuevas = [];
+  for (var c in mapaNovedades) {
+    var item = mapaNovedades[c];
     
-    // Calcular porcentajes de forma segura (evitando división por cero)
-    var pctDgm = sumaTotal > 0 ? (item.dgm / sumaTotal) : 0;
-    var pctMatias = sumaTotal > 0 ? (item.matias / sumaTotal) : 0;
-    
-    filasResultado.push([
-      item.fecha,
-      item.cia,
-      item.ramo,
-      item.dgm,
-      item.matias,
-      sumaTotal,
-      pctDgm,
-      pctMatias
+    filasNuevas.push([
+      item.fecha,            // Col A: Año-mes
+      item.pas,              // Col B: PAS <-- CORREGIDO (Antes estaba item.cia)
+       item.ramo,             // Col D: RAMO_NOMBRE
+      item.cia,              // Col C: CIA <-- CORREGIDO (Antes estaba item.pas)
+      item.primaTotal,       // Col E: PRIMA
+      item.premioTotal,      // Col F: PREMIO
+      item.comisionTotal,    // Col G: COMISION
+      item.cantidadPolizas   // Col H: CANT POLIZAS
     ]);
   }
   
-  // Ordenar el resultado por Fecha, Compañía y Ramo para mantener la estética
-  filasResultado.sort(function(a, b) {
+  // Ordenar el nuevo bloque por Fecha, PAS y CIA para homogeneidad
+  filasNuevas.sort(function(a, b) {
     if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
     if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
-    return a[2].localeCompare(b[2]);
+    if (a[2] !== b[2]) return a[2].localeCompare(b[2]);
+    return a[3].localeCompare(b[3]);
   });
   
-  // 4. Escribir los datos procesados en la solapa de destino
-  var hojaDestino = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES") || ss.insertSheet("LIQUIDACIONES AGRUPADAS POR MES");
-  
-  if (filasResultado.length > 0) {
-    hojaDestino.clear(); // Solo limpia si realmente hay datos para escribir
-    var encabezados = ["FECHA", "CIA", "RAMO_NOMBRE", "DGM", "MATIAS", "Suma total", "% DGM", "% MATIAS"];
-    hojaDestino.appendRow(encabezados);
-    
-    hojaDestino.getRange(2, 1, filasResultado.length, filasResultado[0].length).setValues(filasResultado);
-    
-    // 5. Dar formato profesional automático a las columnas de porcentaje y dinero
-    hojaDestino.getRange(2, 4, filasResultado.length, 3).setNumberFormat("$#,##0"); // DGM, MATIAS, Suma total
-    hojaDestino.getRange(2, 7, filasResultado.length, 2).setNumberFormat("0.00%");  // % DGM y % MATIAS
-  }
-}
-
-// =================================================================
-// FUNCIÓN NUEVA (EJECUTAR POR ÚNICA VEZ) - CORREGIDA
-// =================================================================
-function procesarHistoricoSheetGigante_UnaVez() {
-  // 1. Conectarse al Google Sheet externo usando el ID proporcionado
-  var idPlanillaOrigen = "1N8XRgzTnkHhOWHtSAP0rCEdHYlk5GEDHfEjEyBBNC9Q";
-  var ssOrigen;
-  
-  try {
-    ssOrigen = SpreadsheetApp.openById(idPlanillaOrigen);
-  } catch (e) {
-    Logger.log("No se pudo acceder al archivo origen. Verifica los permisos. Error: " + e.toString());
-    return;
+  // 2. DESTINO: Tu hoja real histórica (LIQUIDACIONES AGRUPADAS POR MES)
+  var hojaDestino = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES");
+  if (!hojaDestino) {
+    throw new Error("No se encontró la hoja 'LIQUIDACIONES AGRUPADAS POR MES'.");
   }
   
-  var hojaOrigen = ssOrigen.getSheetByName("LIQUIDACIONES AGRUPADAS");
-  if (!hojaOrigen) {
-    Logger.log("No se encontró la pestaña 'LIQUIDACIONES AGRUPADAS' en el archivo externo.");
-    return;
+  // Detectar el final de los datos para no pisar el histórico manual de arriba
+  var ultimaFila = hojaDestino.getLastRow();
+  if (ultimaFila === 0) {
+    var encabezadosDestino = ["Año-mes", "PAS", "CIA", "RAMO_NOMBRE", "PRIMA", "PREMIO", "COMISION", "CANT POLIZAS"];
+    hojaDestino.appendRow(encabezadosDestino);
+    ultimaFila = 1;
   }
   
-  // Trae las 226k filas a la memoria
-  var datosOrigen = hojaOrigen.getDataRange().getValues();
-  
-  // Identificar índices de columnas (idénticos a tu función habitual)
-  var idxFecha = 1;       // ColB (Fecha)
-  var idxPas = 10;        // ColK (PAS AGRUPADO)
-  var idxRamo = 11;       // ColL (RAMO_NOMBRE)
-  var idxCia = 9;         // ColJ (CIA)
-  var idxComision = 7;    // ColH (COMISION)
-  
-  var mapaAgrupado = {};
-  var zonaHoraria = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
-  
-  // 2. Recorrer datos de origen optimizando formatos de texto y fechas
-  for (var i = 1; i < datosOrigen.length; i++) {
-    var fila = datosOrigen[i];
+  // 3. INSERCIÓN PURA AL FINAL
+  if (filasNuevas.length > 0) {
+    var rangoDestino = hojaDestino.getRange(ultimaFila + 1, 1, filasNuevas.length, filasNuevas[0].length);
+    rangoDestino.setValues(filasNuevas);
     
-    // CORRECCIÓN CLAVE: Limpiar espacios y pasar a mayúsculas para asegurar coincidencia
-    var pas = fila[idxPas] ? fila[idxPas].toString().trim().toUpperCase() : "";
-    var rawFecha = fila[idxFecha];
-    var ramo = fila[idxRamo];
-    var cia = fila[idxCia];
-    var comision = parseFloat(fila[idxComision]) || 0;
+    // Formatos visuales de Moneda y Números enteros
+    hojaDestino.getRange(ultimaFila + 1, 5, filasNuevas.length, 3).setNumberFormat("$#,##0"); 
+    hojaDestino.getRange(ultimaFila + 1, 8, filasNuevas.length, 1).setNumberFormat("#,##0");  
     
-    if (!pas || !rawFecha || rawFecha === "FECHA") continue;
-    
-    // Normalizar formato fecha a YYYY-MM
-    var fechaStr = "";
-    if (rawFecha instanceof Date) {
-      fechaStr = Utilities.formatDate(rawFecha, zonaHoraria, "yyyy-MM");
-    } else {
-      var stringFecha = rawFecha.toString().trim();
-      if (stringFecha.includes("/")) {
-        var partes = stringFecha.split("/"); 
-        if (partes.length === 3) {
-          // Asegura formato YYYY-MM manejando días/meses de un solo dígito
-          var anio = partes[2].trim();
-          var mes = ("0" + partes[1].trim()).slice(-2);
-          fechaStr = anio + "-" + mes;
-        }
-      } else if (stringFecha.includes("-")) {
-        fechaStr = stringFecha.substring(0, 7); 
-      }
-    }
-    
-    // Salta filas con fechas corruptas o vacías en el histórico
-    if (!fechaStr || fechaStr.length !== 7) continue; 
-    
-    var clave = fechaStr + "_" + cia + "_" + ramo;
-    
-    if (!mapaAgrupado[clave]) {
-      mapaAgrupado[clave] = {
-        fecha: fechaStr,
-        cia: cia,
-        ramo: ramo,
-        dgm: 0,
-        matias: 0
-      };
-    }
-    
-    if (pas === "DGM") {
-      mapaAgrupado[clave].dgm += comision;
-    } else if (pas === "MATIAS") {
-      mapaAgrupado[clave].matias += comision;
-    }
-  }
-  
-  // 3. Procesar los datos agrupados y calcular totales/porcentajes
-  var filasResultado = [];
-  
-  for (var k in mapaAgrupado) {
-    var item = mapaAgrupado[k];
-    var sumaTotal = item.dgm + item.matias;
-    
-    var pctDgm = sumaTotal > 0 ? (item.dgm / sumaTotal) : 0;
-    var pctMatias = sumaTotal > 0 ? (item.matias / sumaTotal) : 0;
-    
-    // Solo incluir en el resumen si hubo algún movimiento para DGM o MATIAS
-    if (sumaTotal > 0) {
-      filasResultado.push([
-        item.fecha,
-        item.cia,
-        item.ramo,
-        item.dgm,
-        item.matias,
-        sumaTotal,
-        pctDgm,
-        pctMatias
-      ]);
-    }
-  }
-  
-  // Ordenar el resultado por Fecha, Compañía y Ramo
-  filasResultado.sort(function(a, b) {
-    if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
-    if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
-    return a[2].localeCompare(b[2]);
-  });
-  
-  // 4. Escribir los datos en tu planilla actual
-  var ssDestino = SpreadsheetApp.getActiveSpreadsheet();
-  var hojaDestino = ssDestino.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES") || ssDestino.insertSheet("LIQUIDACIONES AGRUPADAS POR MES");
-  
-  if (filasResultado.length > 0) {
-    hojaDestino.clear(); // Protegido: Solo borra si el proceso fue exitoso y hay datos
-    
-    var encabezados = ["FECHA", "CIA", "RAMO_NOMBRE", "DGM", "MATIAS", "Suma total", "% DGM", "% MATIAS"];
-    hojaDestino.appendRow(encabezados);
-    
-    hojaDestino.getRange(2, 1, filasResultado.length, filasResultado[0].length).setValues(filasResultado);
-    
-    // 5. Formato automático a los montos y porcentajes resultantes
-    hojaDestino.getRange(2, 4, filasResultado.length, 3).setNumberFormat("$#,##0"); 
-    hojaDestino.getRange(2, 7, filasResultado.length, 2).setNumberFormat("0.00%");  
-    Logger.log("¡Proceso histórico terminado con éxito! Filas resumidas generadas: " + filasResultado.length);
+    console.log("¡Hecho! Se acoplaron con éxito " + filasNuevas.length + " filas nuevas al final del histórico.");
   } else {
-    Logger.log("ATENCIÓN: El proceso terminó pero no encontró ninguna fila que coincida con 'DGM' o 'MATIAS' en la columna K. Revisa los datos del origen.");
+    console.log("No se detectaron novedades válidas para ingresar.");
   }
 }
