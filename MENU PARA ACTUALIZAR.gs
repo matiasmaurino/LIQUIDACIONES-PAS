@@ -4,7 +4,7 @@ function onOpen() {
     .addItem('🚀 Ejecutar Importación Completa', 'ejecutarProcesoCompletoLiquidaciones')
     .addSeparator()
     .addItem('📊 Actualizar Resumen Mensual (Acumulado)', 'consolidarResumenMensual')
-    .addItem('📉 Actualizar Reporte de Variaciones', 'ejecutarVariacionesManualmente')
+    .addItem('📉 Actualizar Reporte de Variaciones', 'generarTablaConVariaciones')
     .addSeparator()
     .addSubMenu(ui.createMenu('🛠️ Pasos Individuales')
        .addItem('1. Importar Clientes FP (CSV)', 'importarCSVsDesdeCarpetas')
