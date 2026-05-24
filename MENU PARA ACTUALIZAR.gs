@@ -1,69 +1,115 @@
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('💼 Gestión Integral de clientes y liquidaciones')
-    .addItem('🚀 Ejecutar Importación Completa', 'ejecutarProcesoCompletoLiquidaciones')
+    .addItem('📥 Paso 1: Procesar Liquidación RIV', 'ejecutarPaso1_RIV')
+    .addItem('📥 Paso 2: Procesar Liquidación PS', 'ejecutarPaso2_PS')
+    .addItem('📥 Paso 3: Procesar Liquidación FP', 'ejecutarPaso3_FP')
     .addSeparator()
-    .addItem('📊 Actualizar Resumen Mensual (Acumulado)', 'consolidarResumenMensual')
-    .addItem('📉 Actualizar Reporte de Variaciones', 'generarTablaConVariaciones')
+    .addItem('👥 Paso 4: Agrupar Clientes y Asignar PAS', 'ejecutarPaso4_Agrupacion')
+    .addSeparator()
+    .addItem('📊 Paso 5: Actualizar Resumen Mensual', 'ejecutarPaso5_Resumen')
+    .addItem('📉 Paso 6: Actualizar Tabla de Variaciones', 'ejecutarPaso6_Variaciones')
+    .addItem('🚀 Paso 7: Sincronizar Detalle Looker Studio', 'ejecutarPaso7_Looker')
     .addSeparator()
     .addSubMenu(ui.createMenu('🛠️ Pasos Individuales')
-       .addItem('1. Importar Clientes FP (CSV)', 'importarCSVsDesdeCarpetas')
-       .addItem('2. Consolidar Liquidación RIV', 'consolidarYLimpiarRIV')
-       .addItem('3. Consolidar Liquidación PS', 'consolidarYLimpiarPS')
-       .addItem('4. Consolidar Liquidación FP', 'consolidarYLimpiarFP')
-       .addItem('5. Agrupar Clientes e IDs', 'consolidarYAgruparSeguros'))
+       .addItem('Importar Clientes FP base (CSV)', 'importarCSVsDesdeCarpetas'))
     .addToUi();
 }
 
 /**
- * Ejecuta el flujo completo automatizado de liquidaciones.
- * Al finalizar, consolida de forma inteligente el resumen mensual.
+ * PASO 1: Procesamiento exclusivo de Rivadavia
  */
-function ejecutarProcesoCompletoLiquidaciones() {
+function ejecutarPaso1_RIV() {
   const ui = SpreadsheetApp.getUi();
-  
   try {
-    // 1. Ejecutar procesos de consolidación individuales por compañía
-    console.log("Iniciando paso 1: Consolidación RIV...");
+    console.log("Iniciando extracción RIV...");
     consolidarYLimpiarRIV();
-    
-    console.log("Iniciando paso 2: Consolidación PS...");
-    consolidarYLimpiarPS();
-    
-    console.log("Iniciando paso 3: Consolidación FP...");
-    consolidarYLimpiarFP();
-    
-    // 2. Agrupar la información cruzando clientes e IDs de PAS
-    console.log("Iniciando paso 4: Agrupación de seguros y asignación de PAS...");
-    consolidarYAgruparSeguros();
-    
-    // 3. NUEVO LLAMADO: Construir el resumen mensual con las novedades del mes sin pisar el histórico
-    console.log("Iniciando paso 5: Consolidación incremental del Resumen Mensual...");
-    consolidarResumenMensual();
-    
-    ui.alert('✅ Proceso Completado', 'Se ejecutaron todas las importaciones, agrupaciones y el resumen mensual de forma exitosa.', ui.ButtonSet.OK);
-    
+    ui.alert('✅ Paso 1 Completado', 'La liquidación de RIV se procesó correctamente.\n\nContinuá con el "Paso 2".', ui.ButtonSet.OK);
   } catch (error) {
-    console.error("Error en la ejecución del proceso completo: " + error.toString());
-    ui.alert('❌ Error en el Proceso', 'Ocurrió un error durante la ejecución:\n' + error.toString(), ui.ButtonSet.OK);
+    ui.alert('❌ Error en Paso 1 (RIV)', error.toString(), ui.ButtonSet.OK);
   }
 }
 
 /**
- * Función auxiliar para permitirle al usuario actualizar el reporte de variaciones 
- * de forma manual directamente desde el menú principal.
+ * PASO 2: Procesamiento exclusivo de Pronto Pago / PS
  */
-function ejecutarVariacionesManualmente() {
+function ejecutarPaso2_PS() {
   const ui = SpreadsheetApp.getUi();
   try {
-    // Aquí asumimos que en VARIACIONES.gs tu función principal se llama generarReporteVariaciones o similar
-    if (typeof generarReporteVariaciones === 'function') {
-      generarReporteVariaciones();
-      ui.alert('✅ Reporte Actualizado', 'El Reporte con Variaciones se recalculó correctamente.', ui.ButtonSet.OK);
-    } else {
-      ui.alert('⚠️ Advertencia', 'No se encontró una función llamada "generarReporteVariaciones" en tus archivos.', ui.ButtonSet.OK);
-    }
+    console.log("Iniciando extracción PS...");
+    consolidarYLimpiarPS();
+    ui.alert('✅ Paso 2 Completado', 'La liquidación de PS se procesó correctamente.\n\nContinuá con el "Paso 3".', ui.ButtonSet.OK);
   } catch (error) {
-    ui.alert('❌ Error', 'No se pudo actualizar el reporte de variaciones: ' + error.toString(), ui.ButtonSet.OK);
+    ui.alert('❌ Error en Paso 2 (PS)', error.toString(), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * PASO 3: Procesamiento exclusivo de Federación Patronal
+ */
+function ejecutarPaso3_FP() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    console.log("Iniciando extracción FP...");
+    consolidarYLimpiarFP();
+    ui.alert('✅ Paso 3 Completado', 'La liquidación de FP se procesó correctamente.\n\nContinuá con el "Paso 4".', ui.ButtonSet.OK);
+  } catch (error) {
+    ui.alert('❌ Error en Paso 3 (FP)', error.toString(), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * PASO 4: Cruce de clientes e identificación de IDs
+ */
+function ejecutarPaso4_Agrupacion() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    console.log("Iniciando unificación de clientes...");
+    consolidarYAgruparSeguros();
+    ui.alert('✅ Paso 4 Completado', 'Se cruzaron los clientes y se asignaron las matrículas/PAS.\n\nYa podés correr el "Paso 5".', ui.ButtonSet.OK);
+  } catch (error) {
+    ui.alert('❌ Error en Paso 4 (Agrupación)', error.toString(), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * PASO 5: Actualizar Resumen Mensual
+ */
+function ejecutarPaso5_Resumen() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    console.log("Iniciando Resumen Mensual...");
+    consolidarResumenMensual();
+    ui.alert('✅ Paso 5 Completado', 'El Resumen Mensual Acumulado fue actualizado con éxito.\n\nContinuá con el "Paso 6".', ui.ButtonSet.OK);
+  } catch (error) {
+    ui.alert('❌ Error en Paso 5 (Resumen)', error.toString(), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * PASO 6: Calcular Tabla de Variaciones
+ */
+function ejecutarPaso6_Variaciones() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    console.log("Iniciando Tabla con Variaciones...");
+    generarTablaConVariaciones();
+    ui.alert('✅ Paso 6 Completado', 'El Reporte con Variaciones y desvíos fue recalculado con éxito.\n\nFinalizá ejecutando el "Paso 7".', ui.ButtonSet.OK);
+  } catch (error) {
+    ui.alert('❌ Error en Paso 6 (Variaciones)', error.toString(), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * PASO 7: Sincronizar con el Histórico de Looker Studio
+ */
+function ejecutarPaso7_Looker() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    console.log("Iniciando Indexación para Looker Studio...");
+    actualizarHistoricoDetalleLooker();
+    ui.alert('🎉 ¡Proceso Totalmente Finalizado!', 'La base transaccional detallada de Looker Studio se actualizó e indexó de forma incremental sin errores.', ui.ButtonSet.OK);
+  } catch (error) {
+    ui.alert('❌ Error en Paso 7 (Looker)', error.toString(), ui.ButtonSet.OK);
   }
 }

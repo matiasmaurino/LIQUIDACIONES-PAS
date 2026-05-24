@@ -3,7 +3,6 @@ function consolidarYAgruparSeguros() {
   const nombreHojaDestino = "CLIENTES AGRUPADOS";
   
   let mapaClientes = {};
-
   // CONFIGURACIÓN DE HOJAS
   const configuracionHojas = [
     { nombre: "RIV", colNombre: 2, colMatricula: 8, colDir: 9, colTel: 10, colMail: 11, colCuil: 12, etiqueta: "RIV" },        
@@ -55,17 +54,16 @@ function consolidarYAgruparSeguros() {
     });
   });
 
-  // NUEVO: El encabezado ahora incluye ID_CLIENTE al principio
+  // El encabezado incluye ID_CLIENTE al principio
   let resultadoFinal = [["ID_CLIENTE", "CLIENTE", "RIVADAVIA", "PROVINCIA", "FED. PATRONAL", "DIRECCION", "TELEFONO", "EMAIL", "CUIL"]];
   const nombresOrdenados = Object.keys(mapaClientes).sort();
 
   // Generador de ID correlativo
   let contadorID = 1;
-
   nombresOrdenados.forEach(nombre => {
     resultadoFinal.push([
-      contadorID, // Nueva columna A: ID numérico
-      nombre,     // Columna B: Nombre
+      contadorID, 
+      nombre,     
       mapaClientes[nombre].riv,
       mapaClientes[nombre].ps,
       mapaClientes[nombre].fp,
@@ -89,24 +87,9 @@ function consolidarYAgruparSeguros() {
     hojaDestino.autoResizeColumns(1, resultadoFinal[0].length);
     hojaDestino.getRange(1, 1, 1, resultadoFinal[0].length).setFontWeight("bold").setBackground("#f3f3f3");
     
-    console.log("Consolidación terminada con IDs generados.");
+    console.log("✅ Consolidación terminada con IDs de clientes generados.");
   }
-
-// ... (todo tu código anterior de pegado de datos e IDs se mantiene igual)
-
-  if (resultadoFinal.length > 1) {
-    hojaDestino.getRange(1, 1, resultadoFinal.length, resultadoFinal[0].length).setValues(resultadoFinal);
-    hojaDestino.autoResizeColumns(1, resultadoFinal[0].length);
-    hojaDestino.getRange(1, 1, 1, resultadoFinal[0].length).setFontWeight("bold").setBackground("#f3f3f3");
-    
-    console.log("Consolidación terminada con IDs generados.");
-  }
-
-  // =========================================================
-  // EL REMATE AUTOMÁTICO (DEBE IR ACÁ, ADENTRO DE LA FUNCIÓN)
-  // =========================================================
-  console.log("Iniciando generación de resumen de comisiones mensuales...");
-  generarResumenMensualConPorcentajes(); 
-  console.log("¡Todo el sistema se actualizó correctamente!");
-
-} // <-- ESTA LLAVE CIERRA LA FUNCIÓN PRINCIPAL 'consolidarYAgruparSeguros'
+  
+  // SOLUCIÓN: Se eliminó la llamada fantasma a generarResumenMensualConPorcentajes()
+  console.log("¡Paso 4 finalizado con éxito de forma limpia!");
+}

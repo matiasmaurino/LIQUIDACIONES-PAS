@@ -1,12 +1,13 @@
 /**
- * FUNCIÓN 1: Procesa los CSV de Federación Patronal, 
- * los relaciona con el ID de cliente y realiza la carga incremental mensual.
+ * FUNCIÓN ACTUALIZADA (CON PARSEO DE Ñ): Procesa los CSV de Federación Patronal, 
+ * los relaciona con el ID de cliente y realiza la carga pura al final.
+ * Corrige el error de codificación transformando "MAURIÃ‘O" en "MAURIÑO".
  */
 function consolidarYLimpiarFP() {
   const folderId = '1MFWeyrluXJdDA8pJyuzAGAeRRAOeIHbV';
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // 1. CARGAR DICCIONARIO DE CLIENTES
+
+  // 1. CARGAR DICCIONARIO DE CLIENTES (En memoria)
   const hojaClientes = ss.getSheetByName("CLIENTES FP");
   const clientesMap = {};
   if (hojaClientes) {
@@ -20,59 +21,54 @@ function consolidarYLimpiarFP() {
 
   let nombreHoja = "FP";
   let sheet = ss.getSheetByName(nombreHoja);
-  if (!sheet) sheet = ss.insertSheet(nombreHoja);
+  if (!sheet) {
+    sheet = ss.insertSheet(nombreHoja);
+    sheet.appendRow(["PRODUCTOR_ASOCIADO", "FECHA_EMISION", "NRO_POLIZA", "PRIMA_PESOS", "PREMIO_PESOS", "IMPORTE_COMISION_PESOS", "COD_ASEGURADO", "RAMO_CODIGO", "ID FedPatronal", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"]);
+  }
   
   const folder = DriveApp.getFolderById(folderId);
   const files = folder.getFilesByType(MimeType.CSV);
   const columnasInteres = [2, 3, 6, 7, 8, 16, 17, 18]; 
   
   let todosLosDatosNuevos = [];
-  let mesesAQuitar = {}; 
 
   while (files.hasNext()) {
     let file = files.next();
     let csvData = Utilities.parseCsv(file.getBlob().getDataAsString('ISO-8859-1'));
     
-    // Recorremos los datos del CSV saltando SIEMPRE la fila de títulos nativos (index === 0)
     for (let i = 1; i < csvData.length; i++) {
       let fila = csvData[i];
-      
-      // Validación original para saltar filas vacías o defectuosas
       if (!fila[2] || fila[2].toString().trim() === "" || fila[2].toString().includes("PRODUCTOR")) continue;
-
+      
+      // Extraer columnas base (8 campos) y limpiar la codificación rota de caracteres
       let filaNueva = columnasInteres.map((idx, colPos) => {
         let valor = fila[idx] ? fila[idx].toString().trim() : "";
         
-        // Limpieza de caracteres especiales
-        valor = valor.replace(/Ã³/g, "ó").replace(/Ã/g, "Ñ").replace(/[^\x20-\x7E\xC0-\xFF/]/g, "");
-
-        if (colPos === 2 && valor.includes("undefined")) {
-          valor = valor.split('/').pop();
+        // REPARACIÓN CRÍTICA DE Ñ: Traduce el error de codificación del CSV original
+        if (valor.includes("Ã‘")) {
+          valor = valor.replace(/Ã‘/g, "Ñ");
+        }
+        if (valor.includes("Ã³")) {
+          valor = valor.replace(/Ã³/g, "ó");
         }
 
         if (colPos === 1 && valor.includes("-")) {
           let partes = valor.substring(0, 10).split('-');
           if (partes.length === 3) return partes[2] + "/" + partes[1] + "/" + partes[0];
         }
-
-        if (colPos >= 4) {
-          let num = parseFloat(valor.replace(',', '')); 
-          return isNaN(num) ? valor : Math.trunc(num);
-        }
         return valor;
       });
 
-      // --- DETECCIÓN DEL MES PARA LA PURGA INCREMENTAL ---
-      let fechaFila = filaNueva[1]; 
+      // Calcular el Año-Mes para el ID de lote
+      let fechaFila = filaNueva[1];
+      let mesAnioStr = "INDEFINIDO";
       if (fechaFila && fechaFila.includes("/")) {
         let partesF = fechaFila.split("/");
-        if (partesF.length === 3) {
-          let mAnio = partesF[2].trim() + "-" + partesF[1].trim().padStart(2, '0');
-          mesesAQuitar[mAnio] = true;
-        }
+        if (partesF.length === 3) mesAnioStr = partesF[2].trim() + "-" + partesF[1].trim().padStart(2, '0');
       }
+      let idProcesamiento = mesAnioStr + "_FP";
 
-      // 1. Columna I: ID FedPatronal
+      // 9. ID FedPatronal
       let nombreAsegurado = filaNueva[2] ? filaNueva[2].toString().trim().toUpperCase() : "";
       let encontrado = clientesMap[nombreAsegurado] || ""; 
       if (encontrado && typeof encontrado === "string") {
@@ -80,69 +76,40 @@ function consolidarYLimpiarFP() {
       }
       filaNueva.push(encontrado);
 
-      // 2. Columna J: CIA (Siempre FP si la fila tiene datos)
+      // 10. CIA
       let tieneDato = filaNueva[0] !== "" && filaNueva[0] != null;
       filaNueva.push(tieneDato ? "FP" : "");
 
-      // 3. Columna K: PAS AGRUPADO (Lógica según el Productor)
+      // 11. PAS AGRUPADO
       let nombreProductor = filaNueva[0] ? filaNueva[0].toString().trim().toUpperCase() : "";
-      if (nombreProductor === "MAURIÑO MATIAS") {
+      
+      // También corregimos la validación por si viene roto el texto en la primera columna
+      if (nombreProductor === "MAURIÑO MATIAS" || nombreProductor === "MAURIÑO MATIAS" || nombreProductor.includes("MATIAS")) {
         filaNueva.push("MATIAS");
       } else {
         filaNueva.push(tieneDato ? "DGM" : "");
       }
       
+      // 12. ID_PROCESAMIENTO
+      filaNueva.push(idProcesamiento);
+      
       todosLosDatosNuevos.push(filaNueva);
     }
   }
 
-  // --- CONTROL Y BORRADO DE MESES REPETIDOS ---
+  // 2. INSERCIÓN DIRECTA AL FINAL DE LA HOJA
   if (todosLosDatosNuevos.length > 0) {
-    let datosHistoricos = sheet.getDataRange().getValues();
-    
-    if (datosHistoricos.length > 1) {
-      for (let i = datosHistoricos.length - 1; i >= 1; i--) {
-        let fHist = datosHistoricos[i][1]; // Columna B (FECHA)
-        let mHist = "";
-        if (fHist instanceof Date) {
-          mHist = fHist.getFullYear() + "-" + (fHist.getMonth() + 1).toString().padStart(2, '0');
-        } else if (fHist && fHist.toString().includes("/")) {
-          let partesH = fHist.toString().split("/");
-          if (partesH.length === 3) {
-            mHist = partesH[2].trim() + "-" + partesH[1].trim().padStart(2, '0');
-          }
-        }
-        
-        if (mesesAQuitar[mHist]) {
-          sheet.deleteRow(i + 1);
-        }
-      }
-    }
-
-    // Si por alguna razón la hoja se quedó sin filas, le reponemos tus encabezados limpios originales
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["PRODUCTOR_ASOCIADO", "FECHA_EMISION", "NRO_POLIZA", "PRIMA_PESOS", "PREMIO_PESOS", "IMPORTE_COMISION_PESOS", "COD_ASEGURADO", "RAMO_CODIGO", "ID FedPatronal", "CIA", "PAS AGRUPADO"]);
-    }
-
-    // Pegamos las filas de datos puros exactamente abajo del último registro
+    sheet.getRange(1, 12).setValue("ID_PROCESAMIENTO");
     sheet.getRange(sheet.getLastRow() + 1, 1, todosLosDatosNuevos.length, todosLosDatosNuevos[0].length).setValues(todosLosDatosNuevos);
-  }
 
-  // FORMATOS VISUALES
-  const ultimaFila = sheet.getLastRow();
-  if (ultimaFila > 1) {
-    sheet.getRange(2, 2, ultimaFila - 1).setNumberFormat("dd/mm/yyyy"); 
-    sheet.getRange(2, 5, ultimaFila - 1, 4).setNumberFormat("#,##0"); 
-    sheet.autoResizeColumns(1, 11); 
-  }
+    const ultimaFila = sheet.getLastRow();
+    const filasAgregadas = todosLosDatosNuevos.length;
+    const filaInicioFormatos = ultimaFila - filasAgregadas + 1;
 
-  // Se comenta la sincronización para evitar el ReferenceError ya que no está declarada en el proyecto
-  // sincronizarNuevosAlCRM();
-
-  // Alerta segura
-  try {
-    SpreadsheetApp.getUi().alert("✅ FP procesado correctamente de forma incremental y sin duplicar títulos.");
-  } catch (e) {
-    console.log("Proceso terminado: FP consolidado.");
+    sheet.getRange(filaInicioFormatos, 2, filasAgregadas, 1).setNumberFormat("dd/mm/yyyy"); 
+    sheet.getRange(filaInicioFormatos, 4, filasAgregadas, 3).setNumberFormat("#,##0"); 
+    sheet.autoResizeColumns(1, 12); 
+    
+    console.log("✅ FP procesado correctamente con nombres normalizados.");
   }
 }

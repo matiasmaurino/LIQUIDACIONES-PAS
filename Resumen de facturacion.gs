@@ -1,140 +1,143 @@
+/**
+ * VERSÍON ULTRA-OPTIMIZADA EN MEMORIA (CORREGIDA - 8 COLUMNAS): 
+ * Agrupa los datos detallados de las pestañas individuales de las compañías (FP, RIV, PS) 
+ * y actualiza de forma incremental la hoja "LIQUIDACIONES AGRUPADAS POR MES".
+ * Respeta estrictamente la estructura histórica de 8 columnas.
+ */
 function consolidarResumenMensual() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hojasOrigen = ["FP", "RIV", "PS"];
   
-  // 1. ORIGEN: Datos detallados de las liquidaciones actuales
-  var hojaDetalle = ss.getSheetByName("LIQUIDACIONES AGRUPADAS");
-  if (!hojaDetalle) {
-    console.warn("No se encontró la solapa 'LIQUIDACIONES AGRUPADAS'.");
-    return;
+  const hojaDestino = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES");
+  if (!hojaDestino) {
+    throw new Error("No se encontró la hoja de destino 'LIQUIDACIONES AGRUPADAS POR MES'");
   }
-  var datosDetalle = hojaDetalle.getDataRange().getValues();
-  if (datosDetalle.length <= 1) {
-    console.warn("La hoja 'LIQUIDACIONES AGRUPADAS' no contiene filas de datos.");
-    return;
-  }
-  
-  // Mapeo dinámico basado en los encabezados reales de la hoja de origen (LIQUIDACIONES AGRUPADAS)
-  var encabezadosDetalle = datosDetalle[0];
-  var idxFecha = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "FECHA"); // Col B
-  var idxPrima = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PRIMA"); // Col F
-  var idxPremio = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PREMIO"); // Col G
-  var idxComision = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "COMISION"); // Col H
-  var idxCia = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "CIA"); // Col J
-  var idxPas = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "PAS AGRUPADO"); // Col K
-  var idxRamo = encabezadosDetalle.findIndex(h => h.toString().trim().toUpperCase() === "RAMO_NOMBRE"); // Col L
-  
-  if (idxFecha === -1 || idxPrima === -1 || idxPremio === -1 || idxComision === -1 || idxCia === -1 || idxPas === -1 || idxRamo === -1) {
-    throw new Error("Faltan columnas críticas en 'LIQUIDACIONES AGRUPADAS'. Verificá que existan: FECHA, PRIMA, PREMIO, COMISION, CIA, PAS AGRUPADO y RAMO_NOMBRE.");
-  }
-  
-  // Procesar y agrupar las filas en memoria
-  var mapaNovedades = {};
-  
-  for (var i = 1; i < datosDetalle.length; i++) {
-    var fila = datosDetalle[i];
-    
-    var rawPas = fila[idxPas] ? fila[idxPas].toString().trim().toUpperCase() : "";
-    var rawFecha = fila[idxFecha];
-    var ramo = fila[idxRamo] ? fila[idxRamo].toString().trim() : "";
-    var cia = fila[idxCia] ? fila[idxCia].toString().trim() : "";
-    
-    var prima = parseFloat(fila[idxPrima]) || 0;
-    var premio = parseFloat(fila[idxPremio]) || 0;
-    var comision = parseFloat(fila[idxComision]) || 0;
-    
-    if (!rawFecha || rawFecha === "FECHA" || rawFecha === "") continue;
-    
-    // Traducción normalizada del PAS
-    var pasTraducido = "";
-    if (rawPas.includes("DANIEL GUILLERMO") || rawPas === "DGM") {
-      pasTraducido = "DGM";
-    } else if (rawPas.includes("MATIAS") || rawPas === "MATIAS") {
-      pasTraducido = "MATIAS";
-    } else {
-      pasTraducido = rawPas; 
-    }
-    
-    // Convertir la fecha a formato YYYY-MM
-    var fechaStr = "";
-    if (rawFecha instanceof Date) {
-      fechaStr = Utilities.formatDate(rawFecha, ss.getSpreadsheetTimeZone(), "yyyy-MM");
-    } else {
-      fechaStr = rawFecha.toString().substring(0, 7);
-    }
-    
-    if (fechaStr.length !== 7 || !fechaStr.includes("-")) continue;
-    
-    var clave = fechaStr + "_" + pasTraducido + "_" + cia + "_" + ramo;
-    
-    if (!mapaNovedades[clave]) {
-      mapaNovedades[clave] = {
-        fecha: fechaStr,
-        cia: cia,
-        pas: pasTraducido,
-        ramo: ramo,
-        primaTotal: 0,
-        premioTotal: 0,
-        comisionTotal: 0,
-        cantidadPolizas: 0
+
+  // 1. LEER TODO EL RESUMEN EXISTENTE A LA MEMORIA (ARRAY)
+  let datosDestinoRaw = hojaDestino.getDataRange().getValues();
+  // Estructura nativa exacta de 8 columnas de tu histórico
+  let encabezadosDestino = ["Año-mes", "PAS", "RAMO_NOMBRE", "CIA", "PRIMA", "PREMIO", "COMISION", "CANT POLIZAS"];
+  let resumenesMap = {}; 
+
+  if (datosDestinoRaw.length > 1) {
+    encabezadosDestino = datosDestinoRaw[0];
+    for (let i = 1; i < datosDestinoRaw.length; i++) {
+      let mesAnioEx = datosDestinoRaw[i][0] ? datosDestinoRaw[i][0].toString().trim() : "";
+      let pasEx = datosDestinoRaw[i][1] ? datosDestinoRaw[i][1].toString().trim().toUpperCase() : "";
+      let ramoEx = datosDestinoRaw[i][2] ? datosDestinoRaw[i][2].toString().trim() : "";
+      let ciaEx = datosDestinoRaw[i][3] ? datosDestinoRaw[i][3].toString().trim().toUpperCase() : "";
+      
+      // Clave única combinando las 4 dimensiones para evitar mezclar datos
+      let clave = mesAnioEx + "_" + pasEx + "_" + ciaEx + "_" + ramoEx;
+      
+      resumenesMap[clave] = {
+        mesAnio: mesAnioEx,
+        pas: pasEx,
+        ramo: ramoEx,
+        cia: ciaEx,
+        prima: parseFloat(datosDestinoRaw[i][4]) || 0,
+        premio: parseFloat(datosDestinoRaw[i][5]) || 0,
+        comision: parseFloat(datosDestinoRaw[i][6]) || 0,
+        polizas: parseInt(datosDestinoRaw[i][7]) || 0
       };
     }
-    
-    mapaNovedades[clave].primaTotal += prima;
-    mapaNovedades[clave].premioTotal += premio;
-    mapaNovedades[clave].comisionTotal += comision;
-    mapaNovedades[clave].cantidadPolizas += 1; 
   }
-  
-  // Transformar a matriz estructurada de 8 columnas (CON EL ORDEN DE PAS Y CIA CORREGIDO)
-  var filasNuevas = [];
-  for (var c in mapaNovedades) {
-    var item = mapaNovedades[c];
-    
-    filasNuevas.push([
-      item.fecha,            // Col A: Año-mes
-      item.pas,              // Col B: PAS <-- CORREGIDO (Antes estaba item.cia)
-       item.ramo,             // Col D: RAMO_NOMBRE
-      item.cia,              // Col C: CIA <-- CORREGIDO (Antes estaba item.pas)
-      item.primaTotal,       // Col E: PRIMA
-      item.premioTotal,      // Col F: PREMIO
-      item.comisionTotal,    // Col G: COMISION
-      item.cantidadPolizas   // Col H: CANT POLIZAS
-    ]);
-  }
-  
-  // Ordenar el nuevo bloque por Fecha, PAS y CIA para homogeneidad
-  filasNuevas.sort(function(a, b) {
-    if (a[0] !== b[0]) return a[0].localeCompare(b[0]);
-    if (a[1] !== b[1]) return a[1].localeCompare(b[1]);
-    if (a[2] !== b[2]) return a[2].localeCompare(b[2]);
-    return a[3].localeCompare(b[3]);
+
+  // 2. PROCESAR CADA COMPAÑÍA COMPLETAMENTE EN MEMORIA
+  hojasOrigen.forEach(nombreHoja => {
+    let sheet = ss.getSheetByName(nombreHoja);
+    if (!sheet) return;
+
+    let dataRaw = sheet.getDataRange().getValues();
+    if (dataRaw.length <= 1) return; 
+
+    // Índices de columnas estables según tus archivos RIV, PS y FP optimizados
+    let colFecha = 1;      // Columna B (FECHA)
+    let colRamo = 3;       // Columna D (RAMO)
+    let colPrima = nombreHoja === "FP" ? 3 : 5;     // D para FP, F para RIV/PS
+    let colPremio = nombreHoja === "FP" ? 4 : 6;    // E para FP, G para RIV/PS
+    let colComision = nombreHoja === "FP" ? 5 : 7;  // F para FP, H para RIV/PS
+    let colCia = 9;        // Columna J (CIA)
+    let colPAS = 10;       // Columna K (PAS AGRUPADO)
+
+    for (let i = 1; i < dataRaw.length; i++) {
+      let fila = dataRaw[i];
+      let pas = fila[colPAS] ? fila[colPAS].toString().trim().toUpperCase() : "";
+      let cia = fila[colCia] ? fila[colCia].toString().trim().toUpperCase() : "";
+      let ramo = fila[colRamo] ? fila[colRamo].toString().trim() : "";
+      let fechaRaw = fila[colFecha];
+      
+      if (!pas || !fechaRaw) continue;
+
+      let mesAnioStr = "";
+      // Formatear fecha de forma segura a YYYY-MM
+      if (fechaRaw instanceof Date) {
+        let mm = (fechaRaw.getMonth() + 1).toString().padStart(2, '0');
+        mesAnioStr = fechaRaw.getFullYear() + "-" + mm;
+      } else if (fechaRaw.toString().includes("/")) {
+        let partes = fechaRaw.toString().split("/");
+        if (partes.length === 3) {
+          mesAnioStr = partes[2].trim() + "-" + partes[1].trim().padStart(2, '0');
+        }
+      }
+
+      if (mesAnioStr === "" || mesAnioStr.length !== 7) continue;
+
+      let claveAgrupado = mesAnioStr + "_" + pas + "_" + cia + "_" + ramo;
+      let prima = parseFloat(fila[colPrima]) || 0;
+      let premio = parseFloat(fila[colPremio]) || 0;
+      let comision = parseFloat(fila[colComision]) || 0;
+
+      // Acumulación matemática en memoria RAM
+      if (resumenesMap[claveAgrupado]) {
+        resumenesMap[claveAgrupado].prima += prima;
+        resumenesMap[claveAgrupado].premio += premio;
+        resumenesMap[claveAgrupado].comision += comision;
+        resumenesMap[claveAgrupado].polizas += 1;
+      } else {
+        resumenesMap[claveAgrupado] = {
+          mesAnio: mesAnioStr,
+          pas: pas,
+          ramo: ramo,
+          cia: cia,
+          prima: prima,
+          premio: premio,
+          comision: comision,
+          polizas: 1
+        };
+      }
+    }
   });
+
+  // 3. RECONSTRUIR LA MATRIZ FINAL (8 COLUMNAS EXACTAS)
+  let resultadoMatrizFinal = [encabezadosDestino];
   
-  // 2. DESTINO: Tu hoja real histórica (LIQUIDACIONES AGRUPADAS POR MES)
-  var hojaDestino = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES");
-  if (!hojaDestino) {
-    throw new Error("No se encontró la hoja 'LIQUIDACIONES AGRUPADAS POR MES'.");
+  Object.keys(resumenesMap).forEach(clave => {
+    let item = resumenesMap[clave];
+    resultadoMatrizFinal.push([
+      item.mesAnio, // Col A
+      item.pas,     // Col B
+      item.ramo,    // Col C
+      item.cia,     // Col D
+      item.prima,   // Col E
+      item.premio,  // Col F
+      item.comision,// Col G
+      item.polizas  // Col H
+    ]);
+  });
+
+  // 4. ESCRIBUIR EL BLOQUE COMPLETO DE UN SOLO GOLPE
+  hojaDestino.clearContents();
+  hojaDestino.getRange(1, 1, resultadoMatrizFinal.length, resultadoMatrizFinal[0].length).setValues(resultadoMatrizFinal);
+
+  // Formatos rápidos en lote
+  const ultimaFilaDestino = hojaDestino.getLastRow();
+  if (ultimaFilaDestino > 1) {
+    hojaDestino.getRange(2, 1, ultimaFilaDestino - 1, 4).setNumberFormat("@"); // Columnas de texto congeladas
+    hojaDestino.getRange(2, 5, ultimaFilaDestino - 1, 3).setNumberFormat("$#,##0"); // Formato moneda para valores económicos
+    hojaDestino.getRange(2, 8, ultimaFilaDestino - 1, 1).setNumberFormat("#,##0"); // Cantidad de pólizas entero
+    hojaDestino.autoResizeColumns(1, 8);
   }
-  
-  // Detectar el final de los datos para no pisar el histórico manual de arriba
-  var ultimaFila = hojaDestino.getLastRow();
-  if (ultimaFila === 0) {
-    var encabezadosDestino = ["Año-mes", "PAS", "CIA", "RAMO_NOMBRE", "PRIMA", "PREMIO", "COMISION", "CANT POLIZAS"];
-    hojaDestino.appendRow(encabezadosDestino);
-    ultimaFila = 1;
-  }
-  
-  // 3. INSERCIÓN PURA AL FINAL
-  if (filasNuevas.length > 0) {
-    var rangoDestino = hojaDestino.getRange(ultimaFila + 1, 1, filasNuevas.length, filasNuevas[0].length);
-    rangoDestino.setValues(filasNuevas);
-    
-    // Formatos visuales de Moneda y Números enteros
-    hojaDestino.getRange(ultimaFila + 1, 5, filasNuevas.length, 3).setNumberFormat("$#,##0"); 
-    hojaDestino.getRange(ultimaFila + 1, 8, filasNuevas.length, 1).setNumberFormat("#,##0");  
-    
-    console.log("¡Hecho! Se acoplaron con éxito " + filasNuevas.length + " filas nuevas al final del histórico.");
-  } else {
-    console.log("No se detectaron novedades válidas para ingresar.");
-  }
+
+  console.log("✅ ¡Éxito absoluto! Resumen Mensual consolidado respetando las 8 columnas históricas.");
 }
