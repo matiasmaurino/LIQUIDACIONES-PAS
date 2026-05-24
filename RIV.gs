@@ -3,112 +3,131 @@ function consolidarYLimpiarRIV() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
   let sheet = ss.getSheetByName("RIV");
-  if (!sheet) {
-    sheet = ss.insertSheet("RIV");
-    sheet.appendRow(["PRODUCTOR", "FECHA", "ASEGURADO", "RAMO", "POLIZA", "PRIMA", "PREMIO", "COMISION", "MATRICULA", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"]);
-  }
+  if (!sheet) sheet = ss.insertSheet("RIV");
   
   try {
-    const folder = DriveApp.getFolderById(folderId);
-    const files = folder.getFiles();
-    const columnasInteres = [0, 3, 4, 5, 10, 8, 11, 2];
-    let todosLosDatosNuevos = [];
-    let idsProcesamientoNuevos = {};
+    const query = `'${folderId}' in parents and trashed = false`;
+    const filesList = Drive.Files.list({
+      q: query,
+      fields: 'files(id, name)'
+    }).files;
 
-    while (files.hasNext()) {
-      let file = files.next();
-      let fileName = file.getName().toLowerCase();
+    if (!filesList || filesList.length === 0) {
+      SpreadsheetApp.getUi().alert("No se encontraron archivos.");
+      return;
+    }
+
+    // Índices originales Excel: 0(Fecha), 3(Asegurado), 4(Ramo), 5(Poliza), 10(Prima), 8(Premio), 11(Comisión), 2(Matrícula)
+    const columnasInteres = [0, 3, 4, 5, 10, 8, 11, 2]; 
+    
+    let todosLosDatos = [];
+    let isFirstFile = true;
+
+    for (const file of filesList) {
+      let fileName = file.name.toLowerCase();
+      
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-        let blob = file.getBlob();
-        let resource = {
-          title: "[TEMP] " + file.getName(),
-          mimeType: MimeType.GOOGLE_SHEETS,
-          parents: [{id: folderId}]
-        };
+        let fileSource = DriveApp.getFileById(file.id);
+        let blob = fileSource.getBlob();
+        let resource = { name: "temp_convert", mimeType: MimeType.GOOGLE_SHEETS };
         
         let tempFile = Drive.Files.create(resource, blob);
         let tempSpreadsheet = SpreadsheetApp.openById(tempFile.id);
         let tempSheet = tempSpreadsheet.getSheets()[0];
-        let fullData = tempSheet.getDataRange().getValues();
+        let excelData = tempSheet.getDataRange().getValues();
         
-        DriveApp.getFileById(tempFile.id).setTrashed(true);
-        if (!fullData || fullData.length <= 1) continue;
+        Drive.Files.remove(tempFile.id);
 
-        let datosProcesados = fullData.slice(1).map((fila) => {
-          if (fila.length === 0) return null;
+        let datosProcesados = excelData.map((fila, index) => {
+          if (index === 0 && !isFirstFile) return null;
 
-          let fechaFormateada = "";
-          let mesAnioStr = "INDEFINIDO";
+          let columnasExtraidas = columnasInteres.map((idx, colPos) => {
+            let valor = fila[idx] != null ? fila[idx] : "";
 
-          let columnasExtraidas = columnasInteres.map(idx => {
-            let valor = fila[idx];
-            if (valor === undefined || valor === null) return "";
-            
-            if (columnasInteres.indexOf(idx) === 0) {
-              let dateObj = null;
-              if (valor instanceof Date) {
-                dateObj = valor;
-              } else if (typeof valor === 'number') {
-                dateObj = new Date(1899, 11, 30);
-                dateObj.setDate(dateObj.getDate() + valor);
-              }
-              if (dateObj) {
-                fechaFormateada = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), "dd/MM/yyyy");
-                mesAnioStr = dateObj.getFullYear() + "-" + (dateObj.getMonth() + 1).toString().padStart(2, '0');
-                return fechaFormateada;
-              }
+            // 1. LIMPIEZA DE ASEGURADO (Quitar coma entre apellido y nombre)
+            if (colPos === 1 && index > 0) {
+              valor = String(valor).replace(/,/g, "").trim();
             }
-            return valor.toString().trim();
+
+            // Limpieza caracteres UTF-8
+            if (typeof valor === "string") {
+              valor = valor.replace(/Ã³/g, "ó").replace(/Ã¡/g, "á")
+                           .replace(/Ã©/g, "é").replace(/Ã/g, "Ñ")
+                           .replace(/[^\x20-\x7E\xC0-\xFF/]/g, "").trim();
+            }
+
+            // 2. FECHA
+            if (colPos === 0 && valor !== "" && index > 0) {
+              let d = (valor instanceof Date) ? valor : new Date(valor);
+              if (!isNaN(d.getTime())) return d;
+            }
+
+            // 3. PÓLIZA (Quitar prefijo 47-)
+            if (colPos === 3 && typeof valor === "string" && index > 0) {
+              value = valor.replace(/^\d{2}-/, "");
+            }
+
+            // 4. CORRECCIÓN DE NÚMEROS (PRI.COB, PAGOS, COM.DEV)
+            if ((colPos >= 4 && colPos <= 6) && valor !== "" && index > 0) {
+              let strValor = String(valor).trim();
+              if (strValor.includes(",") && strValor.includes(".")) {
+                strValor = strValor.replace(/\./g, "").replace(",", ".");
+              } 
+              else if (strValor.includes(",")) {
+                strValor = strValor.replace(",", ".");
+              }
+              
+              let num = parseFloat(strValor);
+              return isNaN(num) ? valor : Math.trunc(num);
+            }
+
+            // 5. MATRÍCULA (Solo números)
+            if (colPos === 7 && valor !== "" && index > 0) {
+              return String(valor).replace(/\D/g, "");
+            }
+
+            return valor;
           });
 
-          let tieneDato = fila[0] !== "" && fila[0] != null; 
-          let nombreProductor = tieneDato ? "MAURIÑO DANIEL GUILLERMO" : "";
-          let compania = tieneDato ? "RIV" : "";
-          let pasAgrupado = tieneDato ? "DGM" : "";
-          
-          // Generar ID de lote específico para Rivadavia
-          let idProcesamiento = mesAnioStr + "_RIV";
-          if (tieneDato) idsProcesamientoNuevos[idProcesamiento] = true;
+          // SECCIÓN DE ARMADO DE FILA LOGICAL (Columnas A hasta K)
+          if (index === 0) {
+            // Encabezados exactos para la fila 1
+            return ["Nombre Productor", "FECHA", "ASEGURADO", "RAMO", "POLIZA", "PRI.COB", "PAGOS", "COM.DEV", "MATRIC.", "CIA", "PAS AGRUPADO"];
+          } else {
+            let tieneDato = fila[0] !== "" && fila[0] != null; 
+            let nombreProductor = tieneDato ? "MAURIÑO DANIEL GUILLERMO" : "";
+            
+            // Si hay productor, completamos CIA (J) y PAS AGRUPADO (K)
+            let compania = tieneDato ? "RIV" : "";
+            let pasAgrupado = tieneDato ? "DGM" : "";
 
-          return [nombreProductor].concat(columnasExtraidas).concat([compania, pasAgrupado, idProcesamiento]);
+            // Unimos todo en el orden correcto: [A] + [B a I] + [J, K]
+            return [nombreProductor].concat(columnasExtraidas).concat([compania, pasAgrupado]);
+          }
         }).filter(fila => fila !== null);
 
-        todosLosDatosNuevos = todosLosDatosNuevos.concat(datosProcesados);
+        todosLosDatos = todosLosDatos.concat(datosProcesados);
+        isFirstFile = false;
       }
     }
 
-    // FILTRADO SEGURO EN MEMORIA (SÚPER VELOZ)
-    if (todosLosDatosNuevos.length > 0) {
-      let datosHistoricos = sheet.getDataRange().getValues();
-      let encabezados = ["PRODUCTOR", "FECHA", "ASEGURADO", "RAMO", "POLIZA", "PRIMA", "PREMIO", "COMISION", "MATRICULA", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"];
-      let historicoConservado = [];
-
-      if (datosHistoricos.length > 1) {
-        encabezados = datosHistoricos[0];
-        // Columna L es índice 11
-        for (let i = 1; i < datosHistoricos.length; i++) {
-          let idHist = datosHistoricos[i][11]; 
-          if (!idsProcesamientoNuevos[idHist]) {
-            historicoConservado.push(datosHistoricos[i]);
-          }
-        }
-      }
-
-      let resultadoFinal = [encabezados].concat(historicoConservado).concat(todosLosDatosNuevos);
-
-      sheet.clearContents();
-      sheet.getRange(1, 1, resultadoFinal.length, resultadoFinal[0].length).setValues(resultadoFinal);
-
+    if (todosLosDatos.length > 0) {
+      sheet.clear(); 
+      sheet.getRange(1, 1, todosLosDatos.length, todosLosDatos[0].length).setValues(todosLosDatos);
+      
       const ultimaFila = sheet.getLastRow();
       if (ultimaFila > 1) {
         sheet.getRange(2, 2, ultimaFila - 1, 1).setNumberFormat("dd/mm/yyyy");
         sheet.getRange(2, 6, ultimaFila - 1, 3).setNumberFormat("#,##0"); 
         sheet.getRange(2, 9, ultimaFila - 1, 1).setNumberFormat("@"); 
-        sheet.autoResizeColumns(1, 12);
+        sheet.autoResizeColumns(1, 11); // Modificado a 11 columnas para incluir J y K
       }
-      console.log("✅ RIV procesado de forma incremental mediante ID de procesamiento.");
     }
-  } catch (e) {
-    console.log("Error en RIV: " + e.message);
+    
+    SpreadsheetApp.getUi().alert("✅ Procesado correctamente. Se arreglaron los valores numéricos y se integró PAS AGRUPADO.");
+    
+  } catch (err) {
+    Logger.log(err.toString());
+    SpreadsheetApp.getUi().alert("Error: " + err.message);
   }
 }
