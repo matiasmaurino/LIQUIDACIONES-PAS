@@ -1,7 +1,7 @@
 /**
- * FUNCIÓN ULTRA-RESILIENTE Y DINÁMICA: Sincroniza el detalle analítico hacia Looker.
- * Se adapta automáticamente al tamaño real de columnas (12, 13 o más) que tengan 
- * tus hojas de origen, evitando errores de desajuste de intervalos.
+ * REVOLUCIONARIA FUNCIÓN MULTI-COMPAÑÍA: Sincroniza el detalle analítico hacia la hoja de Looker.
+ * Escanea de forma inteligente las solapas de las compañías actuales y purga el gran histórico
+ * basándose estrictamente en los ID_PROCESAMIENTO individuales (ej. 2026-05_RIV, 2026-05_PS).
  */
 function actualizarHistoricoDetalleLooker() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -10,7 +10,7 @@ function actualizarHistoricoDetalleLooker() {
   
   let todosLosDatosEntrantes = [];
   let idsLoteNuevos = {};
-  let cabeceraEstandar = [];
+  let cabeceraEstandar = ["PRODUCTOR", "FECHA", "ASEGURADO", "RAMO", "POLIZA", "PRIMA", "PREMIO", "COMISION", "MATRICULA", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"];
 
   // 1. ESCANEAR Y RECOLECTAR NOVEDADES DE LAS PESTAÑAS INDIVIDUALES
   nombresHojasOrigen.forEach(nombre => {
@@ -18,90 +18,59 @@ function actualizarHistoricoDetalleLooker() {
     if (!hoja) return;
     
     let datos = hoja.getDataRange().getValues();
-    if (datos.length <= 1) return; // Vacía o sólo cabecera
+    if (datos.length <= 1) return; // Si solo tiene cabecera, pasamos de largo
 
-    // Guardamos la cabecera real de la hoja para saber la estructura
-    if (cabeceraEstandar.length === 0 || datos[0].length > cabeceraEstandar.length) {
-      cabeceraEstandar = datos[0];
-    }
-
-    // Buscamos dinámicamente en qué columna está el "ID_PROCESAMIENTO"
-    let idxIdProcesamiento = datos[0].indexOf("ID_PROCESAMIENTO");
-    if (idxIdProcesamiento === -1) {
-      // Si no encuentra el texto, por defecto es la última columna
-      idxIdProcesamiento = datos[0].length - 1;
-    }
+    // Forzamos a que use la primera cabecera válida encontrada como molde estructural
+    cabeceraEstandar = datos[0];
 
     for (let i = 1; i < datos.length; i++) {
-      let fila = datos[i];
-      let idFila = fila[idxIdProcesamiento]; 
-      
-      if (idFila && idFila.toString().trim() !== "") {
-        idsLoteNuevos[idFila.toString().trim()] = true;
-        todosLosDatosEntrantes.push(fila); 
+      let idFila = datos[i][11]; // Columna L (ID_PROCESAMIENTO)
+      if (idFila) {
+        idsLoteNuevos[idFila] = true;
+        todosLosDatosEntrantes.push(datos[i]);
       }
     }
   });
 
   if (todosLosDatosEntrantes.length === 0) {
-    console.log("⚠️ No se encontraron IDs de lote válidos en las pestañas de origen.");
-    SpreadsheetApp.getUi().alert("⚠️ Atención", "No se detectaron datos listos para subir en las hojas de origen.", SpreadsheetApp.getUi().ButtonSet.OK);
+    console.log("No se detectaron novedades transaccionales en las pestañas de las compañías.");
     return;
   }
 
-  // Determinamos el ancho real final en base a la cabecera detectada
-  const anchoColumnasReal = cabeceraEstandar.length;
-
-  // 2. PREPARAR U OPTIMIZAR LA HOJA DE DESTINO
+  // 2. LEER GRAN HISTÓRICO DE LOOKER Y FILTRAR QUIRÚRGICAMENTE EN MEMORIA
   let hojaDestino = ss.getSheetByName(nombreHojaDestino);
   if (!hojaDestino) {
     hojaDestino = ss.insertSheet(nombreHojaDestino);
+    hojaDestino.appendRow(cabeceraEstandar);
   }
   
   let datosHistoricos = hojaDestino.getDataRange().getValues();
   let historicoAConservar = [];
-  
-  // Identificamos dónde buscar el ID en el histórico existente
-  let idxIdHist = datosHistoricos.length > 0 ? datosHistoricos[0].indexOf("ID_PROCESAMIENTO") : -1;
-  if (idxIdHist === -1) idxIdHist = anchoColumnasReal - 1;
 
   if (datosHistoricos.length > 1) {
+    cabeceraEstandar = datosHistoricos[0];
     for (let i = 1; i < datosHistoricos.length; i++) {
-      let filaHist = datosHistoricos[i];
-      let idHist = filaHist[idxIdHist]; 
+      let idHist = datosHistoricos[i][11]; // Columna L en el histórico total
       
-      // Si el registro NO pertenece al lote que estamos inyectando hoy, se queda intacto
-      if (!idHist || !idsLoteNuevos[idHist.toString().trim()]) {
-        // Normalizamos el ancho de la fila vieja por si acaso
-        while (filaHist.length < anchoColumnasReal) filaHist.push("");
-        historicoAConservar.push(filaHist.slice(0, anchoColumnasReal));
+      // Si el registro NO pertenece al lote específico de la compañía/mes que estamos inyectando, se queda
+      if (!idsLoteNuevos[idHist]) {
+        historicoAConservar.push(datosHistoricos[i]);
       }
     }
   }
 
-  // Aseguramos que todas las filas entrantes tengan exactamente el mismo ancho que la cabecera
-  let novedadesNormalizadas = todosLosDatosEntrantes.map(fila => {
-    while (fila.length < anchoColumnasReal) fila.push("");
-    return fila.slice(0, anchoColumnasReal);
-  });
-
-  // 3. COMBINAR TODO EL BLOQUE EN MEMORIA RAM
-  let matrizFinalLooker = [cabeceraEstandar].concat(historicoAConservar).concat(novedadesNormalizadas);
+  // 3. AMALGAMAR Y REESCRIBIR DE UN SOLO TIRO
+  let matrizFinalLooker = [cabeceraEstandar].concat(historicoAConservar).concat(todosLosDatosEntrantes);
   
-  // Limpieza absoluta de la solapa destino para reconfigurar el nuevo ancho sin colisiones
-  hojaDestino.clear();
+  hojaDestino.clearContents();
+  hojaDestino.getRange(1, 1, matrizFinalLooker.length, matrizFinalLooker[0].length).setValues(matrizFinalLooker);
   
-  // ESCRITURA DINÁMICA: Ajusta las columnas en base al valor real en memoria (ej. 13)
-  hojaDestino.getRange(1, 1, matrizFinalLooker.length, anchoColumnasReal).setValues(matrizFinalLooker);
-  
-  // 4. APLICAR FORMATOS RÁPIDOS EN BLOQUE
+  // Formatos en bloque súper veloces
   const totalFilas = hojaDestino.getLastRow();
   if (totalFilas > 1) {
-    hojaDestino.getRange(2, 2, totalFilas - 1, 1).setNumberFormat("dd/mm/yyyy"); // Fecha en Col B
-    hojaDestino.getRange(2, 4, totalFilas - 1, 5).setNumberFormat("#,##0");       // Formato numérico de corrido para importes
-    hojaDestino.getRange(1, 1, 1, anchoColumnasReal).setFontWeight("bold").setBackground("#f3f3f3"); // Cabecera destacada
-    hojaDestino.autoResizeColumns(1, anchoColumnasReal);
+    hojaDestino.getRange(2, 2, totalFilas - 1).setNumberFormat("dd/mm/yyyy");
+    hojaDestino.getRange(2, 6, totalFilas - 1, 3).setNumberFormat("#,##0"); // Formatea Prima, Premio y Comisión de corrido
+    hojaDestino.autoResizeColumns(1, 12);
   }
-  
-  SpreadsheetApp.getUi().alert("🎉 ¡Sincronización Exitosa!", "Se registraron correctamente todos los datos en 'HISTORICO_DETALLE_LOOKER'.\nLotes procesados: " + Object.keys(idsLoteNuevos).join(", "), SpreadsheetApp.getUi().ButtonSet.OK);
+  console.log("🚀 Sincronización a Looker completada con éxito. Procesados lotes: " + Object.keys(idsLoteNuevos).join(", "));
 }

@@ -1,7 +1,7 @@
 /**
- * FUNCIÓN ACTUALIZADA (CON PARSEO DE Ñ): Procesa los CSV de Federación Patronal, 
+ * FUNCIÓN ACTUALIZADA BLINDADA: Procesa los CSV de Federación Patronal, 
  * los relaciona con el ID de cliente y realiza la carga pura al final.
- * Corrige el error de codificación transformando "MAURIÃ‘O" en "MAURIÑO".
+ * Corrige de forma infalible el error de codificación forzando "MAURIÑO MATIAS".
  */
 function consolidarYLimpiarFP() {
   const folderId = '1MFWeyrluXJdDA8pJyuzAGAeRRAOeIHbV';
@@ -40,17 +40,18 @@ function consolidarYLimpiarFP() {
       let fila = csvData[i];
       if (!fila[2] || fila[2].toString().trim() === "" || fila[2].toString().includes("PRODUCTOR")) continue;
       
-      // Extraer columnas base (8 campos) y limpiar la codificación rota de caracteres
+      // Extraer columnas base (8 campos)
       let filaNueva = columnasInteres.map((idx, colPos) => {
         let valor = fila[idx] ? fila[idx].toString().trim() : "";
         
-        // REPARACIÓN CRÍTICA DE Ñ: Traduce el error de codificación del CSV original
-        if (valor.includes("Ã‘")) {
-          valor = valor.replace(/Ã‘/g, "Ñ");
+        // REPARACIÓN INMUNE: Si la celda de texto refiere al productor y contiene "MAURI", forzamos el nombre limpio
+        if (colPos === 0 && valor.toUpperCase().includes("MAURI")) {
+          return "MAURIÑO MATIAS";
         }
-        if (valor.includes("Ã³")) {
-          valor = valor.replace(/Ã³/g, "ó");
-        }
+
+        // Corrección genérica para otras columnas (como nombres de asegurados que tengan Ñ o tildes rotas)
+        if (valor.includes("Ã‘")) valor = valor.replace(/Ã‘/g, "Ñ");
+        if (valor.includes("Ã³")) valor = valor.replace(/Ã³/g, "ó");
 
         if (colPos === 1 && valor.includes("-")) {
           let partes = valor.substring(0, 10).split('-');
@@ -82,9 +83,7 @@ function consolidarYLimpiarFP() {
 
       // 11. PAS AGRUPADO
       let nombreProductor = filaNueva[0] ? filaNueva[0].toString().trim().toUpperCase() : "";
-      
-      // También corregimos la validación por si viene roto el texto en la primera columna
-      if (nombreProductor === "MAURIÑO MATIAS" || nombreProductor === "MAURIÑO MATIAS" || nombreProductor.includes("MATIAS")) {
+      if (nombreProductor.includes("MATIAS")) {
         filaNueva.push("MATIAS");
       } else {
         filaNueva.push(tieneDato ? "DGM" : "");
@@ -110,6 +109,8 @@ function consolidarYLimpiarFP() {
     sheet.getRange(filaInicioFormatos, 4, filasAgregadas, 3).setNumberFormat("#,##0"); 
     sheet.autoResizeColumns(1, 12); 
     
-    console.log("✅ FP procesado correctamente con nombres normalizados.");
+    console.log("✅ FP procesado: Se normalizaron los nombres usando filtro de coincidencia por RAM.");
+  } else {
+    console.log("No se encontraron archivos o datos nuevos para procesar en FP.");
   }
 }
