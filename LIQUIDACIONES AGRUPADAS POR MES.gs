@@ -1,127 +1,100 @@
 /**
- * VERSIÓN PROTEGIDA Y ULTRA-OPTIMIZADA: 
- * Agrupa los datos detallados de las pestañas individuales de las compañías (FP, RIV, PS)
- * y actualiza el resumen MENSUAL de forma QUIRÚRGICA sin borrar registros manuales de otros meses.
+ * FUNCIÓN ACTUALIZADA: Genera el resumen consolidado dentro del mismo Google Sheet.
+ * Toma los datos origen únicamente de la pestaña "LIQUIDACIONES AGRUPADAS".
+ * AJUSTE: Ahora mapea e importa el campo "RAMO_NOMBRE" desde la columna L de la hoja agrupada.
  */
 function consolidarResumenMensual() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const hojasOrigen = ["FP", "RIV", "PS"];
+  const hojaAgrupada = ss.getSheetByName("LIQUIDACIONES AGRUPADAS");
   
-  const hojaDestino = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES");
-  if (!hojaDestino) {
-    throw new Error("No se encontró la hoja de destino 'LIQUIDACIONES AGRUPADAS POR MES'");
+  if (!hojaAgrupada) {
+    SpreadsheetApp.getUi().alert("⚠️ Error", "No se encontró la pestaña 'LIQUIDACIONES AGRUPADAS'. Primero debés correr el Paso 5.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
   }
-
-  // 1. DETECTAR QUÉ MESES Y COMPAÑÍAS ESTAMOS PROCESANDO EN ESTA TANDA
-  let lotesNuevosMap = {}; 
-  let resumenesNuevosMap = {};
-
-  hojasOrigen.forEach(nombreHoja => {
-    let sheet = ss.getSheetByName(nombreHoja);
-    if (!sheet) return;
-
-    let dataRaw = sheet.getDataRange().getValues();
-    if (dataRaw.length <= 1) return; 
-
-    let colFecha = 1;  // Columna B (FECHA)
-    let colRamo = 3;   // Columna D (RAMO)
-    let colPrima = nombreHoja === "FP" ? 3 : 5;     
-    let colPremio = nombreHoja === "FP" ? 4 : 6;    
-    let colComision = nombreHoja === "FP" ? 5 : 7;  
-    let colCia = 9;    // Columna J (CIA)
-    let colPAS = 10;   // Columna K (PAS AGRUPADO)
-
-    for (let i = 1; i < dataRaw.length; i++) {
-      let fila = dataRaw[i];
-      let pas = fila[colPAS] ? fila[colPAS].toString().trim().toUpperCase() : "";
-      let cia = fila[colCia] ? fila[colCia].toString().trim().toUpperCase() : nombreHoja;
-      let ramo = fila[colRamo] ? fila[colRamo].toString().trim() : "";
-      let fechaRaw = fila[colFecha];
-      
-      if (!pas || !fechaRaw) continue;
-
-      let mesAnioStr = "";
-      if (fechaRaw instanceof Date) {
-        let mm = (fechaRaw.getMonth() + 1).toString().padStart(2, '0');
-        mesAnioStr = fechaRaw.getFullYear() + "-" + mm;
-      } else if (fechaRaw.toString().includes("/")) {
-        let partes = fechaRaw.toString().split("/");
-        if (partes.length === 3) mesAnioStr = partes[2].trim() + "-" + partes[1].trim().padStart(2, '0');
-      }
-
-      if (mesAnioStr === "" || mesAnioStr.length !== 7) continue;
-
-      // Marcamos este lote (Mes + Compañía) como "activo" para purgarlo del histórico y no duplicar
-      let claveLote = mesAnioStr + "_" + cia;
-      lotesNuevosMap[claveLote] = true;
-
-      // Acumulamos la agrupación en memoria RAM
-      let claveAgrupado = mesAnioStr + "_" + pas + "_" + cia + "_" + ramo;
-      if (resumenesNuevosMap[claveAgrupado]) {
-        resumenesNuevosMap[claveAgrupado].prima += parseFloat(fila[colPrima]) || 0;
-        resumenesNuevosMap[claveAgrupado].premio += parseFloat(fila[colPremio]) || 0;
-        resumenesNuevosMap[claveAgrupado].comision += parseFloat(fila[colComision]) || 0;
-        resumenesNuevosMap[claveAgrupado].polizas += 1;
-      } else {
-        resumenesNuevosMap[claveAgrupado] = {
-          mesAnio: mesAnioStr, pas: pas, ramo: ramo, cia: cia,
-          prima: parseFloat(fila[colPrima]) || 0,
-          premio: parseFloat(fila[colPremio]) || 0,
-          comision: parseFloat(fila[colComision]) || 0,
-          polizas: 1
-        };
-      }
-    }
-  });
-
-  // 2. LEER EL HISTÓRICO EXISTENTE Y FILTRAR CON CUIDADO (CONSERVANDO LO MANUAL)
-  let datosDestinoRaw = hojaDestino.getDataRange().getValues();
-  let encabezadosDestino = ["Año-mes", "PAS", "RAMO_NOMBRE", "CIA", "PRIMA", "PREMIO", "COMISION", "CANT POLIZAS"];
-  let historicoAConservar = [];
-
-  if (datosDestinoRaw.length > 1) {
-    encabezadosDestino = datosDestinoRaw[0];
-    for (let i = 1; i < datosDestinoRaw.length; i++) {
-      let filaHist = datosDestinoRaw[i];
-      let mesAnioEx = filaHist[0] ? filaHist[0].toString().trim() : "";
-      let ciaEx = filaHist[3] ? filaHist[3].toString().trim().toUpperCase() : "";
-      
-      let claveFilaHist = mesAnioEx + "_" + ciaEx;
-
-      // SI LA FILA DEL HISTÓRICO NO PERTENECE AL MES/COMPAÑÍA QUE ESTAMOS PROCESANDO AHORA, SE QUEDA INTACTA.
-      // Esto protege tus cargas manuales de meses anteriores o registros históricos puros.
-      if (!lotesNuevosMap[claveFilaHist]) {
-        historicoAConservar.push(filaHist);
-      }
-    }
+  
+  const datos = hojaAgrupada.getDataRange().getValues();
+  if (datos.length <= 1) {
+    SpreadsheetApp.getUi().alert("⚠️ Atención", "La pestaña 'LIQUIDACIONES AGRUPADAS' está vacía o solo tiene encabezados.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
   }
+  
+  // Detectar los índices de columnas dinámicamente de la hoja agrupada
+  const cabecera = datos[0];
+  const idxProductor = cabecera.indexOf("PRODUCTOR_ASOCIADO") !== -1 ? cabecera.indexOf("PRODUCTOR_ASOCIADO") : cabecera.indexOf("Nombre Productor");
+  const idxPrima = cabecera.indexOf("PRIMA_PESOS") !== -1 ? cabecera.indexOf("PRIMA_PESOS") : cabecera.indexOf("PRI.COB");
+  const idxPremio = cabecera.indexOf("PREMIO_PESOS") !== -1 ? cabecera.indexOf("PREMIO_PESOS") : cabecera.indexOf("PAGOS");
+  const idxComision = cabecera.indexOf("IMPORTE_COMISION_PESOS") !== -1 ? cabecera.indexOf("IMPORTE_COMISION_PESOS") : cabecera.indexOf("COM.DEV");
+  const idxPasAgrupado = cabecera.indexOf("PAS AGRUPADO");
+  
+  // AJUSTE SOLICITADO: Mapeamos dinámicamente RAMO_NOMBRE (Debería ser la Col L / índice 11)
+  let idxRamoNombre = cabecera.indexOf("RAMO_NOMBRE");
+  if (idxRamoNombre === -1) {
+    // Si por alguna razón el encabezado exacto no coincide, forzamos el índice 11 (Col L) como indicaste
+    idxRamoNombre = 11; 
+  }
+  
+  // Agrupar y sumar montos por Productor y Ramo en memoria RAM
+  let resumenProductores = {};
 
-  // 3. TRANSFORMAR LAS NOVEDADES A ARRAY
-  let matrizNovedades = [];
-  Object.keys(resumenesNuevosMap).forEach(clave => {
-    let item = resumenesNuevosMap[clave];
-    matrizNovedades.push([
-      item.mesAnio, item.pas, item.ramo, item.cia,
-      item.prima, item.premio, item.comision, item.polizas
+  for (let i = 1; i < datos.length; i++) {
+    let fila = datos[i];
+    let productor = fila[idxProductor] ? fila[idxProductor].toString().trim() : "SIN NOMBRE";
+    let ramoNombre = fila[idxRamoNombre] ? fila[idxRamoNombre].toString().trim() : "SIN RAMO";
+    let prima = parseFloat(fila[idxPrima]) || 0;
+    let premio = parseFloat(fila[idxPremio]) || 0;
+    let comision = parseFloat(fila[idxComision]) || 0;
+    let pasAgrupado = idxPasAgrupado !== -1 && fila[idxPasAgrupado] ? fila[idxPasAgrupado].toString().trim() : "";
+    
+    // Creamos una clave combinada única por si el mismo productor tiene múltiples ramos y querés ver el desglose limpio
+    let claveUnica = productor + "_" + ramoNombre;
+    
+    if (!resumenProductores[claveUnica]) {
+      resumenProductores[claveUnica] = { 
+        productor: productor,
+        ramo: ramoNombre,
+        prima: 0, 
+        premio: 0, 
+        comision: 0, 
+        pas: pasAgrupado 
+      };
+    }
+    
+    resumenProductores[claveUnica].prima += prima;
+    resumenProductores[claveUnica].premio += premio;
+    resumenProductores[claveUnica].comision += comision;
+  }
+  
+  // Construir la matriz de salida con la nueva columna incorporada
+  let matrizResumen = [["PRODUCTOR ASOCIADO", "PAS AGRUPADO", "RAMO NOMBRE", "TOTAL PRIMA", "TOTAL PREMIO", "TOTAL COMISIÓN"]];
+  
+  for (let clave in resumenProductores) {
+    matrizResumen.push([
+      resumenProductores[clave].productor,
+      resumenProductores[clave].pas,
+      resumenProductores[clave].ramo, // Campo importado de la Col L
+      Number(resumenProductores[clave].prima.toFixed(2)),
+      Number(resumenProductores[clave].premio.toFixed(2)),
+      Number(resumenProductores[clave].comision.toFixed(2))
     ]);
-  });
-
-  // 4. UNIFICAR Y ESCRIBIR TODO EL BLOQUE PROTEGIDO
-  let matrizFinalCompleta = [encabezadosDestino].concat(historicoAConservar).concat(matrizNovedades);
-  
-  // Limpiamos y reescribimos el consolidado final protegido
-  hojaDestino.clear();
-  hojaDestino.getRange(1, 1, matrizFinalCompleta.length, 8).setValues(matrizFinalCompleta);
-
-  // Formatos rápidos en lote
-  const ultimaFilaDestino = hojaDestino.getLastRow();
-  if (ultimaFilaDestino > 1) {
-    hojaDestino.getRange(2, 1, ultimaFilaDestino - 1, 4).setNumberFormat("@"); 
-    hojaDestino.getRange(2, 5, ultimaFilaDestino - 1, 3).setNumberFormat("$#,##0"); 
-    hojaDestino.getRange(2, 8, ultimaFilaDestino - 1, 1).setNumberFormat("#,##0"); 
-    hojaDestino.getRange(1, 1, 1, 8).setFontWeight("bold").setBackground("#f3f3f3");
-    hojaDestino.autoResizeColumns(1, 8);
   }
-
-  console.log("✅ ¡Resumen Mensual actualizado! Se protegieron los registros históricos manuales.");
+  
+  // Destino: Buscamos o creamos la pestaña "LIQUIDACIONES AGRUPADAS POR MES"
+  const nombreHojaDestino = "LIQUIDACIONES AGRUPADAS POR MES";
+  let sheetDestino = ss.getSheetByName(nombreHojaDestino);
+  if (!sheetDestino) {
+    sheetDestino = ss.insertSheet(nombreHojaDestino);
+  }
+  
+  // Limpiar datos anteriores y volcar la nueva matriz de 6 columnas
+  sheetDestino.clear();
+  sheetDestino.getRange(1, 1, matrizResumen.length, matrizResumen[0].length).setValues(matrizResumen);
+  
+  // Formatos estéticos aplicados al rango (ahora de 6 columnas)
+  sheetDestino.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#e0e0e0");
+  if (matrizResumen.length > 1) {
+    sheetDestino.getRange(2, 4, matrizResumen.length - 1, 3).setNumberFormat("#,##0.00");
+  }
+  sheetDestino.autoResizeColumns(1, 6);
+  
+  SpreadsheetApp.getUi().alert("🎉 Proceso Completado", "Se actualizó la pestaña '" + nombreHojaDestino + "' incorporando con éxito la columna 'RAMO NOMBRE' desde la hoja unificada.", SpreadsheetApp.getUi().ButtonSet.OK);
 }
