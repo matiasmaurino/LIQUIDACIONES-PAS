@@ -1,13 +1,7 @@
-/**
- * FUNCIÓN ACTUALIZADA BLINDADA: Procesa los CSV de Federación Patronal, 
- * los relaciona con el ID de cliente y realiza la carga pura al final.
- * Corrige de forma infalible el error de codificación forzando "MAURIÑO MATIAS".
- */
 function consolidarYLimpiarFP() {
   const folderId = '1MFWeyrluXJdDA8pJyuzAGAeRRAOeIHbV';
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // 1. CARGAR DICCIONARIO DE CLIENTES (En memoria)
   const hojaClientes = ss.getSheetByName("CLIENTES FP");
   const clientesMap = {};
   if (hojaClientes) {
@@ -23,7 +17,6 @@ function consolidarYLimpiarFP() {
   let sheet = ss.getSheetByName(nombreHoja);
   if (!sheet) {
     sheet = ss.insertSheet(nombreHoja);
-    sheet.appendRow(["PRODUCTOR_ASOCIADO", "FECHA_EMISION", "NRO_POLIZA", "PRIMA_PESOS", "PREMIO_PESOS", "IMPORTE_COMISION_PESOS", "COD_ASEGURADO", "RAMO_CODIGO", "ID FedPatronal", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"]);
   }
   
   const folder = DriveApp.getFolderById(folderId);
@@ -31,25 +24,20 @@ function consolidarYLimpiarFP() {
   const columnasInteres = [2, 3, 6, 7, 8, 16, 17, 18]; 
   
   let todosLosDatosNuevos = [];
-
   while (files.hasNext()) {
     let file = files.next();
     let csvData = Utilities.parseCsv(file.getBlob().getDataAsString('ISO-8859-1'));
-    
     for (let i = 1; i < csvData.length; i++) {
       let fila = csvData[i];
       if (!fila[2] || fila[2].toString().trim() === "" || fila[2].toString().includes("PRODUCTOR")) continue;
       
-      // Extraer columnas base (8 campos)
       let filaNueva = columnasInteres.map((idx, colPos) => {
         let valor = fila[idx] ? fila[idx].toString().trim() : "";
         
-        // REPARACIÓN INMUNE: Si la celda de texto refiere al productor y contiene "MAURI", forzamos el nombre limpio
         if (colPos === 0 && valor.toUpperCase().includes("MAURI")) {
           return "MAURIÑO MATIAS";
         }
 
-        // Corrección genérica para otras columnas (como nombres de asegurados que tengan Ñ o tildes rotas)
         if (valor.includes("Ã‘")) valor = valor.replace(/Ã‘/g, "Ñ");
         if (valor.includes("Ã³")) valor = valor.replace(/Ã³/g, "ó");
 
@@ -60,7 +48,6 @@ function consolidarYLimpiarFP() {
         return valor;
       });
 
-      // Calcular el Año-Mes para el ID de lote
       let fechaFila = filaNueva[1];
       let mesAnioStr = "INDEFINIDO";
       if (fechaFila && fechaFila.includes("/")) {
@@ -69,7 +56,6 @@ function consolidarYLimpiarFP() {
       }
       let idProcesamiento = mesAnioStr + "_FP";
 
-      // 9. ID FedPatronal
       let nombreAsegurado = filaNueva[2] ? filaNueva[2].toString().trim().toUpperCase() : "";
       let encontrado = clientesMap[nombreAsegurado] || ""; 
       if (encontrado && typeof encontrado === "string") {
@@ -77,11 +63,9 @@ function consolidarYLimpiarFP() {
       }
       filaNueva.push(encontrado);
 
-      // 10. CIA
       let tieneDato = filaNueva[0] !== "" && filaNueva[0] != null;
       filaNueva.push(tieneDato ? "FP" : "");
 
-      // 11. PAS AGRUPADO
       let nombreProductor = filaNueva[0] ? filaNueva[0].toString().trim().toUpperCase() : "";
       if (nombreProductor.includes("MATIAS")) {
         filaNueva.push("MATIAS");
@@ -89,27 +73,30 @@ function consolidarYLimpiarFP() {
         filaNueva.push(tieneDato ? "DGM" : "");
       }
       
-      // 12. ID_PROCESAMIENTO
       filaNueva.push(idProcesamiento);
-      
       todosLosDatosNuevos.push(filaNueva);
     }
   }
 
-  // 2. INSERCIÓN DIRECTA AL FINAL DE LA HOJA
   if (todosLosDatosNuevos.length > 0) {
-    sheet.getRange(1, 12).setValue("ID_PROCESAMIENTO");
-    sheet.getRange(sheet.getLastRow() + 1, 1, todosLosDatosNuevos.length, todosLosDatosNuevos[0].length).setValues(todosLosDatosNuevos);
+    let encabezados = ["PRODUCTOR_ASOCIADO", "FECHA_EMISION", "NRO_POLIZA", "PRIMA_PESOS", "PREMIO_PESOS", "IMPORTE_COMISION_PESOS", "COD_ASEGURADO", "RAMO_CODIGO", "ID FedPatronal", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"];
+    let resultadoFinal = [encabezados].concat(todosLosDatosNuevos);
+
+    // 1. LIMPIEZA TOTAL
+    sheet.clearContents();
+    
+    // 2. ESCRITURA DE DATOS
+    sheet.getRange(1, 1, resultadoFinal.length, 12).setValues(resultadoFinal);
+
+    // 3. INYECCIÓN DE LA FÓRMULA ARRAY EN M1 Y M2
+    sheet.getRange("M1").setValue("AUXILIAR_BUSQUEDA");
+    sheet.getRange("M2").setFormula(`=ARRAYFORMULA(IF(A2:A<>"";XLOOKUP(D2:D;AUX!A2:A;AUX!B2:B;"");""))`);
 
     const ultimaFila = sheet.getLastRow();
-    const filasAgregadas = todosLosDatosNuevos.length;
-    const filaInicioFormatos = ultimaFila - filasAgregadas + 1;
-
-    sheet.getRange(filaInicioFormatos, 2, filasAgregadas, 1).setNumberFormat("dd/mm/yyyy"); 
-    sheet.getRange(filaInicioFormatos, 4, filasAgregadas, 3).setNumberFormat("#,##0"); 
-    sheet.autoResizeColumns(1, 12); 
-    
-    console.log("✅ FP procesado: Se normalizaron los nombres usando filtro de coincidencia por RAM.");
+    sheet.getRange(2, 2, ultimaFila - 1, 1).setNumberFormat("dd/mm/yyyy"); 
+    sheet.getRange(2, 4, ultimaFila - 1, 3).setNumberFormat("#,##0"); 
+    sheet.autoResizeColumns(1, 13);
+    console.log("✅ FP procesado e inyectada su ARRAYFORMULA en M2.");
   } else {
     console.log("No se encontraron archivos o datos nuevos para procesar en FP.");
   }

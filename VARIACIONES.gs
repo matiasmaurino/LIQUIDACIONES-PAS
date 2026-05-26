@@ -1,11 +1,9 @@
 /**
- * VERSIÓN ULTRA-OPTIMIZADA: Genera el reporte con variaciones basándose
- * en los datos consolidados de "LIQUIDACIONES AGRUPADAS POR MES".
- * Ejecución en milisegundos al evitar procesar el detalle transaccional.
+ * VERSIÓN ULTRA-OPTIMIZADA Y FORMATEADA: Genera el reporte con variaciones 
+ * aplicando formatos numéricos dinámicos de enteros y decimales por columnas.
  */
 function generarTablaConVariaciones() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  
   // 1. OBTENER DATOS DEL RESUMEN MENSUAL YA CONSOLIDADO
   var hojaOrigen = ss.getSheetByName("LIQUIDACIONES AGRUPADAS POR MES");
   if (!hojaOrigen) {
@@ -18,9 +16,7 @@ function generarTablaConVariaciones() {
   
   var matrizAgrupada = {};
   var listaPas = [];
-
   // 2. PROCESAR EL RESUMEN EN MEMORIA
-  // Estructura de origen: [Año-mes, PAS, RAMO_NOMBRE, CIA, PRIMA, PREMIO, COMISION, CANT POLIZAS]
   for (var i = 1; i < datosBase.length; i++) {
     var fila = datosBase[i];
     var mesAnio = fila[0] ? fila[0].toString().trim() : "";
@@ -29,7 +25,6 @@ function generarTablaConVariaciones() {
     var cia = fila[3] ? fila[3].toString().trim().toUpperCase() : "";
     var comision = parseFloat(fila[6]) || 0;
     var certificados = parseInt(fila[7]) || 0;
-    
     if (!pasAgrupado || !mesAnio || mesAnio === "Año-mes") continue;
     
     if (listaPas.indexOf(pasAgrupado) === -1) listaPas.push(pasAgrupado);
@@ -117,9 +112,38 @@ function generarTablaConVariaciones() {
   
   hojaDestino.getRange(1, 1, resultadoFinal.length, resultadoFinal[0].length).setValues(resultadoFinal);
   
-  // Formato estético rápido
-  hojaDestino.getRange(1, 1, 1, hojaDestino.getLastColumn()).setBackground("#f3f3f3").setFontWeight("bold");
-  hojaDestino.autoResizeColumns(1, hojaDestino.getLastColumn());
+  // 5. SECCIÓN DE FORMATO DINÁMICO POR COLUMNAS
+  var ultimaFila = hojaDestino.getLastRow();
+  var ultimaColumna = hojaDestino.getLastColumn();
   
-  console.log("✅ Reporte con variaciones generado exitosamente en bloque.");
+  if (ultimaFila > 1) {
+    // Formateamos las columnas de texto fijas (A, B y C)
+    hojaDestino.getRange(2, 1, ultimaFila - 1, 3).setNumberFormat("@");
+
+    // Recorremos dinámicamente desde la columna 4 (D) hasta la última columna de la hoja en pasos de 4 en 4
+    for (var col = 4; col <= ultimaColumna; col += 4) {
+      // col     (D, H, L...) -> COMISION (2 decimales con separador de miles)
+      hojaDestino.getRange(2, col, ultimaFila - 1, 1).setNumberFormat("#,##0.00");
+      
+      // col + 1 (E, I, M...) -> CANT POLIZAS (Número entero)
+      if (col + 1 <= ultimaColumna) {
+        hojaDestino.getRange(2, col + 1, ultimaFila - 1, 1).setNumberFormat("#,##0");
+      }
+      
+      // col + 2 (F, J, N...) -> VAR. COMISION (2 decimales con separador de miles)
+      if (col + 2 <= ultimaColumna) {
+        hojaDestino.getRange(2, col + 2, ultimaFila - 1, 1).setNumberFormat("#,##0.00");
+      }
+      
+      // col + 3 (G, K, O...) -> VAR. POLIZAS (Número entero)
+      if (col + 3 <= ultimaColumna) {
+        hojaDestino.getRange(2, col + 3, ultimaFila - 1, 1).setNumberFormat("#,##0");
+      }
+    }
+  }
+  
+  // Formato estético rápido de cabeceras
+  hojaDestino.getRange(1, 1, 1, ultimaColumna).setBackground("#f3f3f3").setFontWeight("bold");
+  hojaDestino.autoResizeColumns(1, ultimaColumna);
+  console.log("✅ Reporte con variaciones generado y formateado exitosamente.");
 }
