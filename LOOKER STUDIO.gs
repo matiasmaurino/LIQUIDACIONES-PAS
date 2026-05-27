@@ -1,76 +1,76 @@
-/**
- * REVOLUCIONARIA FUNCIÓN MULTI-COMPAÑÍA: Sincroniza el detalle analítico hacia la hoja de Looker.
- * Escanea de forma inteligente las solapas de las compañías actuales y purga el gran histórico
- * basándose estrictamente en los ID_PROCESAMIENTO individuales (ej. 2026-05_RIV, 2026-05_PS).
- */
 function actualizarHistoricoDetalleLooker() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const nombresHojasOrigen = ["FP", "RIV", "PS"];
+  const nombreHojaOrigen = "LIQUIDACIONES AGRUPADAS";
   const nombreHojaDestino = "HISTORICO_DETALLE_LOOKER";
   
-  let todosLosDatosEntrantes = [];
-  let idsLoteNuevos = {};
-  let cabeceraEstandar = ["PRODUCTOR", "FECHA", "ASEGURADO", "RAMO", "POLIZA", "PRIMA", "PREMIO", "COMISION", "MATRICULA", "CIA", "PAS AGRUPADO", "ID_PROCESAMIENTO"];
-
-  // 1. ESCANEAR Y RECOLECTAR NOVEDADES DE LAS PESTAÑAS INDIVIDUALES
-  nombresHojasOrigen.forEach(nombre => {
-    let hoja = ss.getSheetByName(nombre);
-    if (!hoja) return;
-    
-    let datos = hoja.getDataRange().getValues();
-    if (datos.length <= 1) return; // Si solo tiene cabecera, pasamos de largo
-
-    // Forzamos a que use la primera cabecera válida encontrada como molde estructural
-    cabeceraEstandar = datos[0];
-
-    for (let i = 1; i < datos.length; i++) {
-      let idFila = datos[i][11]; // Columna L (ID_PROCESAMIENTO)
-      if (idFila) {
-        idsLoteNuevos[idFila] = true;
-        todosLosDatosEntrantes.push(datos[i]);
-      }
-    }
-  });
-
-  if (todosLosDatosEntrantes.length === 0) {
-    console.log("No se detectaron novedades transaccionales en las pestañas de las compañías.");
+  let hojaOrigen = ss.getSheetByName(nombreHojaOrigen);
+  if (!hojaOrigen) {
+    console.error("No se encontró la hoja de origen: " + nombreHojaOrigen);
     return;
   }
-
-  // 2. LEER GRAN HISTÓRICO DE LOOKER Y FILTRAR QUIRÚRGICAMENTE EN MEMORIA
+  
+  let datosOrigen = hojaOrigen.getDataRange().getValues();
+  if (datosOrigen.length <= 1) {
+    console.log("La hoja de origen está vacía o solo tiene cabecera.");
+    return;
+  }
+  
+  // 1. IDENTIFICAR POSICIONES DE LOS ENCABEZADOS EN LA HOJA ORIGEN
+  let encabezadosOrigen = datosOrigen[0].map(h => String(h).trim().toUpperCase());
+  
+  // Definimos las ÚNICAS 7 columnas que van a existir en Looker Studio
+  let columnasDeseadas = ["FECHA", "NOMBRE", "RAMO", "POLIZA", "COMISION", "CIA", "PAS AGRUPADO","RAMO_NOMBRE"];
+  
+  // Buscamos los índices de cada columna en la hoja de origen
+  let indicesColumnas = columnasDeseadas.map(col => encabezadosOrigen.indexOf(col));
+  
+  // La cabecera ahora tiene estrictamente 7 elementos
+  let cabeceraDestino = [...columnasDeseadas];
+  let matrizFinalLooker = [cabeceraDestino];
+  
+  // 2. PROCESAR Y FILTRAR TODAS LAS FILAS EN MEMORIA
+  for (let i = 1; i < datosOrigen.length; i++) {
+    let filaOriginal = datosOrigen[i];
+    let filaFiltrada = [];
+    
+    // Agregamos solo las 7 columnas deseadas en el orden correcto
+    indicesColumnas.forEach(idx => {
+      filaFiltrada.push(idx !== -1 ? filaOriginal[idx] : "");
+    });
+    
+    matrizFinalLooker.push(filaFiltrada);
+  }
+  
+  // 3. SOBREESCRIBIR POR COMPLETO LA HOJA DESTINO
   let hojaDestino = ss.getSheetByName(nombreHojaDestino);
   if (!hojaDestino) {
     hojaDestino = ss.insertSheet(nombreHojaDestino);
-    hojaDestino.appendRow(cabeceraEstandar);
   }
   
-  let datosHistoricos = hojaDestino.getDataRange().getValues();
-  let historicoAConservar = [];
-
-  if (datosHistoricos.length > 1) {
-    cabeceraEstandar = datosHistoricos[0];
-    for (let i = 1; i < datosHistoricos.length; i++) {
-      let idHist = datosHistoricos[i][11]; // Columna L en el histórico total
-      
-      // Si el registro NO pertenece al lote específico de la compañía/mes que estamos inyectando, se queda
-      if (!idsLoteNuevos[idHist]) {
-        historicoAConservar.push(datosHistoricos[i]);
-      }
-    }
-  }
-
-  // 3. AMALGAMAR Y REESCRIBIR DE UN SOLO TIRO
-  let matrizFinalLooker = [cabeceraEstandar].concat(historicoAConservar).concat(todosLosDatosEntrantes);
+  // Limpiamos todo el contenido viejo y formatos previos
+  hojaDestino.clear();
   
-  hojaDestino.clearContents();
+  // Escribimos la nueva matriz de datos limpia (ahora de 7 columnas de ancho)
   hojaDestino.getRange(1, 1, matrizFinalLooker.length, matrizFinalLooker[0].length).setValues(matrizFinalLooker);
   
-  // Formatos en bloque súper veloces
+  // 4. APLICAR FORMATOS AUTOMÁTICOS A LAS NUEVAS COLUMNAS
   const totalFilas = hojaDestino.getLastRow();
   if (totalFilas > 1) {
-    hojaDestino.getRange(2, 2, totalFilas - 1).setNumberFormat("dd/mm/yyyy");
-    hojaDestino.getRange(2, 6, totalFilas - 1, 3).setNumberFormat("#,##0"); // Formatea Prima, Premio y Comisión de corrido
-    hojaDestino.autoResizeColumns(1, 12);
+    let colFechaDestino = cabeceraDestino.indexOf("FECHA") + 1;
+    let colComisionDestino = cabeceraDestino.indexOf("COMISION") + 1;
+    
+    // Formato de Fecha (dd/mm/yyyy)
+    if (colFechaDestino > 0) {
+      hojaDestino.getRange(2, colFechaDestino, totalFilas - 1).setNumberFormat("dd/mm/yyyy");
+    }
+    // Formato de Comisión sin decimales (#,##0)
+    if (colComisionDestino > 0) {
+      hojaDestino.getRange(2, colComisionDestino, totalFilas - 1).setNumberFormat("#,##0");
+    }
+    
+    // Ajuste automático de ancho para las 7 columnas resultantes
+    hojaDestino.autoResizeColumns(1, cabeceraDestino.length);
   }
-  console.log("🚀 Sincronización a Looker completada con éxito. Procesados lotes: " + Object.keys(idsLoteNuevos).join(", "));
+  
+  console.log("🚀 Reemplazo total completado desde LIQUIDACIONES AGRUPADAS. Estructura pura de 7 columnas para Looker.");
 }
